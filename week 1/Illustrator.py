@@ -5,8 +5,12 @@ with shape (Trials, Timepoints, Neurons).
 Works on both real experimental data and Simulator output.
 """
 
+import warnings
+
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.cluster.hierarchy import leaves_list, linkage
+from scipy.spatial.distance import squareform
 
 
 class Illustrator:
@@ -18,6 +22,10 @@ class Illustrator:
     this convention; axis 0 is always trials, axis 1 is always time,
     axis 2 is always neurons.
     """
+
+    # Beyond this many trials, per-trial lines turn into spaghetti and
+    # we default to mean + band only. Caller can override via show_trials.
+    MAX_TRIALS_OVERLAY = 10
 
     def __init__(self, observation: np.ndarray):
         """
@@ -58,14 +66,13 @@ class Illustrator:
         self.trial_cnt, self.timestep_cnt, self.neuron_cnt = self.observation.shape
 
         # Cache once: trial-averaged signal and trial-to-trial std.
-        # With trial_cnt == 1, _trial_std is identically zero — methods
-        # that depend on across-trial variability must guard against this.
+        # ddof is clamped so single-trial input gives an exact-zero std
+        # (ddof=0 → divide by 1) instead of NaN (ddof=1 → divide by 0).
+        # With trial_cnt >= 2 this is the usual sample std.
         self._trial_mean = self.observation.mean(axis=0)              # (T_steps, N)
-        self._trial_std  = self.observation.std(axis=0, ddof=1)       # (T_steps, N)
-    
-    # Beyond this many trials, per-trial lines turn into spaghetti and
-    # we default to mean + band only. Caller can override via show_trials.
-    MAX_TRIALS_OVERLAY = 10
+        self._trial_std  = self.observation.std(
+            axis=0, ddof=min(1, self.trial_cnt - 1),
+        )                                                              # (T_steps, N)
 
     def plot_timeseries(
         self,
@@ -391,6 +398,17 @@ class Illustrator:
                 f"max_lag={max_lag} is too large for T={T} timesteps; "
                 f"need max_lag < T"
             )
+        if max_lag > T // 4:
+            # Per-trial sample count at lag τ is T-τ, so estimates near
+            # max_lag rest on few pairs and get noisy. T//4 is the
+            # conventional safe ceiling and the default this method uses.
+            warnings.warn(
+                f"max_lag={max_lag} exceeds T//4={T // 4}; the longest "
+                f"lag uses only {T - max_lag} pairs per trial and the "
+                f"tail of the ACF may be unreliable.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         if mode not in ("overlay", "subplots", "heatmap"):
             raise ValueError(
@@ -506,3 +524,353 @@ class Illustrator:
 
         fig.tight_layout()
         return fig
+
+    def compute_snr(self, plot: bool = True) -> np.ndarray:
+        """
+        Per-neuron signal-to-noise ratio, exploiting the trial axis.
+
+        Decomposes each neuron's variability into (a) variance shared
+        across trials at matched timesteps — "signal" — and (b)
+        trial-to-trial variability around the trial mean — "noise".
+        The ratio quantifies how reproducible the neuron is across
+        repeated trials.
+
+        Parameters
+        ----------
+        plot : bool, default True
+            Whether to draw the diagnostic plot. The array is returned
+            regardless of this flag.
+
+        Returns
+        -------
+        np.ndarray of shape (N,)
+            Bias-corrected SNR per neuron, in original neuron order.
+            Clipped to >= 0 (negative estimates are sampling noise).
+            Neurons with zero trial-to-trial variability are returned
+            as NaN — technically infinite SNR, i.e. maximally reliable.
+
+        Raises
+        ------
+        ValueError
+            If `trial_cnt == 1` — trial-to-trial variability is
+            undefined with a single trial.
+
+        Notes
+        -----
+        The σ²_noise computed here is the total trial-to-trial
+        variability, which in the underlying dynamical system is a
+        mixture of observation noise v_t and accumulated process noise
+        w_t. It is NOT the observation-noise covariance R from the
+        system model. It answers "how reproducible is this neuron
+        across repeated trials?" — not "what is the sensor noise floor?".
+
+        The decomposition is valid only when all trials share the same
+        input sequence u_t. If trials were collected under different
+        inputs, σ²_noise will absorb input-driven variability,
+        understating noise and overstating signal.
+        """
+        if self.trial_cnt < 2:
+            raise ValueError(
+                "SNR requires at least 2 trials. With a single trial, "
+                "trial-to-trial variability is undefined. Use "
+                "`plot_timeseries` or `plot_autocorrelation` to explore "
+                "the data instead."
+            )
+
+        R = self.trial_cnt
+
+        # Step 1: trial-averaged time series per neuron — already cached
+        # as self._trial_mean, shape (T, N).
+
+        # Step 2: noise variance per neuron. Across-trial variance at
+        # each timestep, then mean over time. ddof=1 for sample variance.
+        var_across_trials = self.observation.var(axis=0, ddof=1)  # (T, N)
+        sigma2_noise = var_across_trials.mean(axis=0)             # (N,)
+
+        # Step 3: raw signal+noise variance — temporal variance of the
+        # trial-averaged trace, ddof=1.
+        sigma2_raw = self._trial_mean.var(axis=0, ddof=1)         # (N,)
+
+        # Step 4: bias-correct. The trial mean still carries a noise
+        # residual of σ²_noise / R, so subtract it. Without this a
+        # pure-noise neuron would have an apparent SNR of 1/R.
+        sigma2_signal = sigma2_raw - sigma2_noise / R             # (N,)
+
+        # Step 5: SNR. Guard the divide for neurons with zero noise —
+        # those are perfectly reproducible (∞ SNR) and become NaN so
+        # the caller can spot them. Clip negative SNR (sampling noise
+        # around zero) to 0; NaN passes through clip unchanged.
+        zero_noise = sigma2_noise == 0
+        safe_noise = np.where(zero_noise, 1.0, sigma2_noise)
+        snr = sigma2_signal / safe_noise
+        snr = np.clip(snr, a_min=0.0, a_max=None)
+        snr[zero_noise] = np.nan
+
+        if plot:
+            self._plot_snr(snr)
+
+        return snr
+
+    def plot_correlation_matrix(
+        self,
+        trial_index: int | None = None,
+        zscore: bool = False,
+        cluster: bool = True,
+    ) -> tuple[plt.Figure, np.ndarray]:
+        """
+        Pairwise Pearson-correlation heatmap of the neural population.
+
+        For each pair of neurons (i, j) the entry is the Pearson
+        correlation between their time series across the T timesteps.
+        By default the time series is the trial average; pass
+        `trial_index` to use a single trial instead. Block structure
+        in the displayed matrix is direct evidence of shared
+        low-dimensional latent drive.
+
+        Parameters
+        ----------
+        trial_index : int, optional
+            Single trial to use. Defaults to the trial-averaged signal.
+        zscore : bool, default False
+            Z-score each neuron's time series before computing. This is
+            mathematically a no-op — `np.corrcoef` already standardises
+            internally — and exists only for API symmetry with
+            `plot_heatmap` and to make the standardisation explicit at
+            the call site. The returned correlation values are
+            identical with or without this flag.
+        cluster : bool, default True
+            If True, reorder rows/columns using average-linkage
+            hierarchical clustering on (1 - C) so co-correlated neurons
+            sit next to each other in the display. The returned matrix
+            is always in *original* neuron order; only the display
+            changes.
+
+        Returns
+        -------
+        (fig, C) : (matplotlib.figure.Figure, np.ndarray of shape (N, N))
+            `C[i, j]` is the Pearson correlation between neuron i and
+            neuron j in original neuron order. Rows/columns for
+            constant-in-time neurons are NaN.
+
+        Raises
+        ------
+        ValueError
+            If `neuron_cnt < 2`, or if `trial_index` is out of range.
+
+        Notes
+        -----
+        Correlations are computed on the trial-averaged signal by
+        default. The result therefore reflects shared *deterministic*
+        structure — what the neurons do together reliably across
+        trials. Trial-to-trial noise, which `compute_snr` measures, is
+        averaged out before this method sees the data.
+
+        Correlation measures linear co-movement. Two neurons driven by
+        the same latent dimension of x_t will appear strongly
+        correlated. A neuron uncorrelated with everything is either
+        noise-dominated (consistent with a low SNR from `compute_snr`)
+        or driven by a latent dimension that no other recorded neuron
+        observes.
+
+        Correlation does not imply a direct connection between neurons.
+        It reflects shared input from the hidden state x_t through the
+        observation matrix C, not a direct neuron-to-neuron coupling.
+        """
+        # --- 1. Validate ---------------------------------------------------
+        N = self.neuron_cnt
+        if N < 2:
+            raise ValueError(
+                "plot_correlation_matrix requires at least 2 neurons; "
+                "a 1x1 correlation matrix is always [[1]] and carries "
+                "no information."
+            )
+
+        if trial_index is None:
+            data = self._trial_mean                  # (T, N)
+            source = "trial mean"
+        else:
+            if not (0 <= trial_index < self.trial_cnt):
+                raise ValueError(
+                    f"trial_index out of range [0, {self.trial_cnt - 1}]; "
+                    f"got {trial_index}"
+                )
+            data = self.observation[trial_index]     # (T, N)
+            source = f"trial {trial_index}"
+
+        # --- 2. Identify constant-in-time neurons --------------------------
+        # Pearson correlation is undefined for a neuron with zero
+        # temporal variance — every pair involving it is 0/0 → NaN.
+        # Use a relative-to-amplitude tolerance so the check catches
+        # both exact constants and the near-constant case that arises
+        # when bit-identical trials are averaged (.mean() introduces
+        # ~1 ULP of rounding, leaving a tiny non-zero variance).
+        temporal_std = data.std(axis=0)              # (N,)
+        scale = np.maximum(np.abs(data).max(axis=0), 1.0)
+        constant = temporal_std <= 1e-12 * scale
+
+        # --- 3. Optional z-scoring (math-no-op, see docstring) ------------
+        if zscore:
+            std = np.where(constant, 1.0, data.std(axis=0, ddof=1))
+            data_for_corr = (data - data.mean(axis=0)) / std
+        else:
+            data_for_corr = data
+
+        # --- 4. Correlation matrix ----------------------------------------
+        # np.corrcoef expects variables-as-rows, so transpose: (N, T).
+        # Suppress the divide-by-zero warning corrcoef emits for
+        # constant rows — we handle the resulting NaNs below.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            C = np.corrcoef(data_for_corr.T)         # (N, N)
+
+        # Be explicit: constant neurons → NaN row/column (corrcoef
+        # already does this in practice, but make it part of the
+        # contract regardless of numpy version).
+        if constant.any():
+            C[constant, :] = np.nan
+            C[:, constant] = np.nan
+
+        # --- 5. Hierarchical clustering for display order -----------------
+        # Operate on the non-constant submatrix only — scipy.linkage
+        # will not accept NaN. Constant neurons get appended after the
+        # clustered group so they remain visible in the heatmap.
+        valid_idx = np.where(~constant)[0]
+        do_cluster = cluster and len(valid_idx) >= 2
+        if do_cluster:
+            sub = C[np.ix_(valid_idx, valid_idx)]
+            dist = 1.0 - sub
+            # Symmetrise and clip for numerical robustness — FP noise
+            # can leave dist slightly asymmetric or negative.
+            dist = (dist + dist.T) / 2.0
+            np.fill_diagonal(dist, 0.0)
+            dist = np.clip(dist, 0.0, 2.0)
+            condensed = squareform(dist, checks=False)
+            Z = linkage(condensed, method="average")
+            leaves = leaves_list(Z)
+            display_order = np.concatenate(
+                [valid_idx[leaves], np.where(constant)[0]]
+            )
+        else:
+            display_order = np.arange(N)
+
+        # --- 6. Plot ------------------------------------------------------
+        display = C[np.ix_(display_order, display_order)]
+        cmap = plt.get_cmap("RdBu_r").copy()
+        cmap.set_bad("lightgray")                    # NaN cells distinct
+        masked = np.ma.masked_invalid(display)
+
+        side = 0.35 * N + 3.0
+        fig, ax = plt.subplots(figsize=(side, side))
+        im = ax.imshow(
+            masked, cmap=cmap, vmin=-1.0, vmax=1.0,
+            origin="upper", interpolation="nearest",
+        )
+
+        tick_labels = [
+            f"{n}*" if constant[n] else str(n) for n in display_order
+        ]
+        ax.set_xticks(np.arange(N))
+        ax.set_yticks(np.arange(N))
+        ax.set_xticklabels(tick_labels, fontsize=8, rotation=90)
+        ax.set_yticklabels(tick_labels, fontsize=8)
+        ax.set_xlabel("neuron")
+        ax.set_ylabel("neuron")
+
+        title = f"Correlation matrix - {source}"
+        if do_cluster:
+            title += " (clustered)"
+        ax.set_title(title)
+
+        cbar = fig.colorbar(im, ax=ax, fraction=0.045, pad=0.04)
+        cbar.set_label("Pearson correlation")
+
+        if constant.any():
+            constants_str = ", ".join(
+                str(int(n)) for n in np.where(constant)[0]
+            )
+            fig.text(
+                0.5, 0.01,
+                f"* constant in time, correlation undefined "
+                f"(neurons: {constants_str})",
+                ha="center", fontsize=8, color="0.3",
+            )
+            fig.tight_layout(rect=(0.0, 0.04, 1.0, 1.0))
+        else:
+            fig.tight_layout()
+
+        return fig, C
+
+    def _plot_snr(self, snr: np.ndarray) -> None:
+        """Render the two-panel SNR diagnostic for `compute_snr`."""
+        N = self.neuron_cnt
+        R = self.trial_cnt
+        T = self.timestep_cnt
+        cmap = plt.get_cmap("tab20")
+
+        # Bounded reliability fraction for display only. NaN propagates,
+        # which we handle explicitly below.
+        r2e = snr / (1.0 + snr)                                 # (N,)
+
+        # Sort descending by r²_e. NaN ("∞ SNR") sorts to the top.
+        sort_key = np.where(np.isnan(r2e), np.inf, r2e)
+        order = np.argsort(-sort_key)
+        r2e_sorted = r2e[order]
+        is_nan = np.isnan(r2e_sorted)
+
+        fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13.5, 4.5))
+
+        # --- Left: bar chart of r²_e --------------------------------
+        bar_colors = [cmap(int(n) % cmap.N) for n in order]
+        # Draw NaN bars at full height with a hatched pattern, so the
+        # neuron is visible rather than a blank slot.
+        bar_heights = np.where(is_nan, 1.0, r2e_sorted)
+        bars = ax_l.bar(
+            np.arange(N), bar_heights,
+            color=bar_colors, edgecolor="0.25", linewidth=0.6,
+        )
+        for i, nan in enumerate(is_nan):
+            if nan:
+                bars[i].set_hatch("///")
+                ax_l.text(
+                    i, 1.02, "∞ SNR",
+                    ha="center", va="bottom", fontsize=7, rotation=90,
+                )
+        ax_l.axhline(
+            0.5, color="k", linewidth=0.8, linestyle="--",
+            label="signal = noise",
+        )
+        ax_l.set_xticks(np.arange(N))
+        ax_l.set_xticklabels([str(n) for n in order], fontsize=8)
+        ax_l.set_xlabel("neuron index (sorted)")
+        ax_l.set_ylabel(r"explainable variance $r^2_e$")
+        ax_l.set_ylim(0, 1.12)
+        ax_l.set_title(f"Signal reliability per neuron (R={R} trials)")
+        ax_l.legend(loc="upper right", fontsize=8, frameon=False)
+
+        # --- Right: trial mean ± 1 SD for top / bottom neurons ------
+        # Only finite-r²_e neurons rank meaningfully; NaN neurons are
+        # "off the scale" reliable and would dominate the comparison.
+        finite_order = order[~is_nan]
+        if len(finite_order) < 6:
+            chosen = list(finite_order)
+        else:
+            chosen = list(finite_order[:3]) + list(finite_order[-3:])
+
+        t = np.arange(T)
+        for n in chosen:
+            color = cmap(int(n) % cmap.N)
+            m = self._trial_mean[:, n]
+            s = self._trial_std[:, n]
+            ax_r.plot(
+                t, m, color=color, linewidth=2.0,
+                label=f"n{n}: r²_e={r2e[n]:.2f}",
+            )
+            ax_r.fill_between(
+                t, m - s, m + s,
+                color=color, alpha=0.20, linewidth=0,
+            )
+        ax_r.set_xlabel("timestep")
+        ax_r.set_ylabel("activity")
+        ax_r.set_title("Top vs bottom reliability — trial mean ± 1 SD")
+        ax_r.legend(fontsize=8, loc="best", frameon=False)
+
+        fig.tight_layout()
