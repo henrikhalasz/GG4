@@ -9,6 +9,7 @@ import warnings
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from scipy.cluster.hierarchy import leaves_list, linkage
 from scipy.spatial.distance import squareform
 
@@ -168,18 +169,8 @@ class Illustrator:
             std_t = None                                    # band undefined
 
         # --- 3. Lay out the grid -------------------------------------------
-        if ncols is None:
-            # Aim for ~square, cap at 4 columns wide.
-            ncols = min(4, n_neurons_plot)
-        nrows = int(np.ceil(n_neurons_plot / ncols))
-
-        # Scale figure size with grid, but keep individual panels readable.
-        fig, axes = plt.subplots(
-            nrows, ncols,
-            figsize=(3.2 * ncols, 2.2 * nrows),
-            sharex=True,
-            squeeze=False,                                  # always 2D, simplifies indexing
-        )
+        fig, axes = self._neuron_grid(n_neurons_plot, ncols=ncols)
+        nrows, ncols = axes.shape
 
         # --- 4. Draw each neuron -------------------------------------------
         t = np.arange(self.timestep_cnt)                    # x-axis
@@ -218,9 +209,7 @@ class Illustrator:
             ax.tick_params(labelsize=8)
 
         # 4d. Blank out any unused panels (grid not exactly filled).
-        for panel_i in range(n_neurons_plot, nrows * ncols):
-            row, col = divmod(panel_i, ncols)
-            axes[row, col].set_visible(False)
+        self._blank_unused(axes, n_neurons_plot)
 
         # --- 5. Shared axis labels and title -------------------------------
         # One y-label on the left column, one x-label on the bottom row.
@@ -417,31 +406,13 @@ class Illustrator:
             )
 
         # --- 3. Compute the autocorrelation -------------------------------
-        # Pool across all trials AND timesteps for μ and Var: the ACF is a
-        # within-trial estimator that assumes stationarity, so a single
-        # global mean per neuron is the right reference. Each lag-τ
-        # estimate averages over R*(T-τ) pairs, so the tail necessarily
-        # uses fewer samples than the head — biased estimator is standard.
+        # Pool across all trials AND timesteps for μ and Var (see
+        # `_acf_pooled` for the full rationale). Biased estimator, NaN
+        # for constant-variance neurons, ACF_n(0) = 1.
         data = self.observation[np.ix_(                     # (r_sel, T, n_sel)
             trial_idx, np.arange(self.timestep_cnt), neuron_idx
         )]
-        mu  = data.mean(axis=(0, 1))                        # (n_sel,)
-        c   = data - mu                                     # (R, T, n_sel)
-        var = (c * c).mean(axis=(0, 1))                     # (n_sel,)
-
-        # Constant / silent neurons: avoid 0/0, mark their ACF NaN so the
-        # caller sees they were skipped rather than a fake flat curve.
-        safe_var = np.where(var == 0, 1.0, var)
-
-        acf = np.empty((max_lag + 1, len(neuron_idx)))
-        for tau in range(max_lag + 1):
-            if tau == 0:
-                prod = c * c
-            else:
-                prod = c[:, :-tau, :] * c[:, tau:, :]       # (R, T-τ, n_sel)
-            acf[tau] = prod.mean(axis=(0, 1))
-        acf /= safe_var
-        acf[:, var == 0] = np.nan
+        acf = self._acf_pooled(data, max_lag)
 
         # --- 4. Plot ------------------------------------------------------
         lags = np.arange(max_lag + 1)
@@ -467,13 +438,8 @@ class Illustrator:
             )
 
         elif mode == "subplots":
-            ncols = min(4, n_sel)
-            nrows = int(np.ceil(n_sel / ncols))
-            fig, axes = plt.subplots(
-                nrows, ncols,
-                figsize=(3.2 * ncols, 2.2 * nrows),
-                sharex=True, sharey=True, squeeze=False,
-            )
+            fig, axes = self._neuron_grid(n_sel, sharey=True)
+            nrows, ncols = axes.shape
             for i, n in enumerate(neuron_idx):
                 row, col = divmod(i, ncols)
                 ax = axes[row, col]
@@ -482,9 +448,7 @@ class Illustrator:
                 ax.axhline(0.0, color="k", linewidth=0.6, linestyle="--")
                 ax.set_title(f"neuron {n}", fontsize=9)
                 ax.tick_params(labelsize=8)
-            for i in range(n_sel, nrows * ncols):
-                row, col = divmod(i, ncols)
-                axes[row, col].set_visible(False)
+            self._blank_unused(axes, n_sel)
             for row in range(nrows):
                 axes[row, 0].set_ylabel("ACF", fontsize=9)
             for col in range(ncols):
@@ -611,6 +575,82 @@ class Illustrator:
 
         return snr
 
+    def _plot_snr(self, snr: np.ndarray) -> None:
+        """Render the two-panel SNR diagnostic for `compute_snr`."""
+        N = self.neuron_cnt
+        R = self.trial_cnt
+        T = self.timestep_cnt
+        cmap = plt.get_cmap("tab20")
+
+        # Bounded reliability fraction for display only. NaN propagates,
+        # which we handle explicitly below.
+        r2e = snr / (1.0 + snr)                                 # (N,)
+
+        # Sort descending by r²_e. NaN ("∞ SNR") sorts to the top.
+        sort_key = np.where(np.isnan(r2e), np.inf, r2e)
+        order = np.argsort(-sort_key)
+        r2e_sorted = r2e[order]
+        is_nan = np.isnan(r2e_sorted)
+
+        fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13.5, 4.5))
+
+        # --- Left: bar chart of r²_e --------------------------------
+        bar_colors = [cmap(int(n) % cmap.N) for n in order]
+        # Draw NaN bars at full height with a hatched pattern, so the
+        # neuron is visible rather than a blank slot.
+        bar_heights = np.where(is_nan, 1.0, r2e_sorted)
+        bars = ax_l.bar(
+            np.arange(N), bar_heights,
+            color=bar_colors, edgecolor="0.25", linewidth=0.6,
+        )
+        for i, nan in enumerate(is_nan):
+            if nan:
+                bars[i].set_hatch("///")
+                ax_l.text(
+                    i, 1.02, "∞ SNR",
+                    ha="center", va="bottom", fontsize=7, rotation=90,
+                )
+        ax_l.axhline(
+            0.5, color="k", linewidth=0.8, linestyle="--",
+            label="signal = noise",
+        )
+        ax_l.set_xticks(np.arange(N))
+        ax_l.set_xticklabels([str(n) for n in order], fontsize=8)
+        ax_l.set_xlabel("neuron index (sorted)")
+        ax_l.set_ylabel(r"explainable variance $r^2_e$")
+        ax_l.set_ylim(0, 1.12)
+        ax_l.set_title(f"Signal reliability per neuron (R={R} trials)")
+        ax_l.legend(loc="upper right", fontsize=8, frameon=False)
+
+        # --- Right: trial mean ± 1 SD for top / bottom neurons ------
+        # Only finite-r²_e neurons rank meaningfully; NaN neurons are
+        # "off the scale" reliable and would dominate the comparison.
+        finite_order = order[~is_nan]
+        if len(finite_order) < 6:
+            chosen = list(finite_order)
+        else:
+            chosen = list(finite_order[:3]) + list(finite_order[-3:])
+
+        t = np.arange(T)
+        for n in chosen:
+            color = cmap(int(n) % cmap.N)
+            m = self._trial_mean[:, n]
+            s = self._trial_std[:, n]
+            ax_r.plot(
+                t, m, color=color, linewidth=2.0,
+                label=f"n{n}: r²_e={r2e[n]:.2f}",
+            )
+            ax_r.fill_between(
+                t, m - s, m + s,
+                color=color, alpha=0.20, linewidth=0,
+            )
+        ax_r.set_xlabel("timestep")
+        ax_r.set_ylabel("activity")
+        ax_r.set_title("Top vs bottom reliability — trial mean ± 1 SD")
+        ax_r.legend(fontsize=8, loc="best", frameon=False)
+
+        fig.tight_layout()
+
     def plot_correlation_matrix(
         self,
         trial_index: int | None = None,
@@ -697,62 +737,24 @@ class Illustrator:
             data = self.observation[trial_index]     # (T, N)
             source = f"trial {trial_index}"
 
-        # --- 2. Identify constant-in-time neurons --------------------------
-        # Pearson correlation is undefined for a neuron with zero
-        # temporal variance — every pair involving it is 0/0 → NaN.
-        # Use a relative-to-amplitude tolerance so the check catches
-        # both exact constants and the near-constant case that arises
-        # when bit-identical trials are averaged (.mean() introduces
-        # ~1 ULP of rounding, leaving a tiny non-zero variance).
-        temporal_std = data.std(axis=0)              # (N,)
-        scale = np.maximum(np.abs(data).max(axis=0), 1.0)
-        constant = temporal_std <= 1e-12 * scale
-
-        # --- 3. Optional z-scoring (math-no-op, see docstring) ------------
+        # --- 2. Optional z-scoring (no-op for the returned C; corrcoef
+        #         standardises internally). Kept for API symmetry with
+        #         plot_heatmap, and explicit at the call site.
         if zscore:
-            std = np.where(constant, 1.0, data.std(axis=0, ddof=1))
-            data_for_corr = (data - data.mean(axis=0)) / std
-        else:
-            data_for_corr = data
+            temporal_std = data.std(axis=0, ddof=1)
+            safe_std = np.where(temporal_std == 0, 1.0, temporal_std)
+            data = (data - data.mean(axis=0)) / safe_std
 
-        # --- 4. Correlation matrix ----------------------------------------
-        # np.corrcoef expects variables-as-rows, so transpose: (N, T).
-        # Suppress the divide-by-zero warning corrcoef emits for
-        # constant rows — we handle the resulting NaNs below.
-        with np.errstate(invalid="ignore", divide="ignore"):
-            C = np.corrcoef(data_for_corr.T)         # (N, N)
+        # --- 3. Correlation matrix + constant-neuron mask -----------------
+        C, constant = self._corrcoef_with_nan(data)
 
-        # Be explicit: constant neurons → NaN row/column (corrcoef
-        # already does this in practice, but make it part of the
-        # contract regardless of numpy version).
-        if constant.any():
-            C[constant, :] = np.nan
-            C[:, constant] = np.nan
+        # --- 4. Hierarchical clustering for display order -----------------
+        do_cluster = cluster and (~constant).sum() >= 2
+        display_order = (
+            self._cluster_order(C) if do_cluster else np.arange(N)
+        )
 
-        # --- 5. Hierarchical clustering for display order -----------------
-        # Operate on the non-constant submatrix only — scipy.linkage
-        # will not accept NaN. Constant neurons get appended after the
-        # clustered group so they remain visible in the heatmap.
-        valid_idx = np.where(~constant)[0]
-        do_cluster = cluster and len(valid_idx) >= 2
-        if do_cluster:
-            sub = C[np.ix_(valid_idx, valid_idx)]
-            dist = 1.0 - sub
-            # Symmetrise and clip for numerical robustness — FP noise
-            # can leave dist slightly asymmetric or negative.
-            dist = (dist + dist.T) / 2.0
-            np.fill_diagonal(dist, 0.0)
-            dist = np.clip(dist, 0.0, 2.0)
-            condensed = squareform(dist, checks=False)
-            Z = linkage(condensed, method="average")
-            leaves = leaves_list(Z)
-            display_order = np.concatenate(
-                [valid_idx[leaves], np.where(constant)[0]]
-            )
-        else:
-            display_order = np.arange(N)
-
-        # --- 6. Plot ------------------------------------------------------
+        # --- 5. Plot ------------------------------------------------------
         display = C[np.ix_(display_order, display_order)]
         cmap = plt.get_cmap("RdBu_r").copy()
         cmap.set_bad("lightgray")                    # NaN cells distinct
@@ -799,78 +801,315 @@ class Illustrator:
 
         return fig, C
 
-    def _plot_snr(self, snr: np.ndarray) -> None:
-        """Render the two-panel SNR diagnostic for `compute_snr`."""
-        N = self.neuron_cnt
-        R = self.trial_cnt
-        T = self.timestep_cnt
-        cmap = plt.get_cmap("tab20")
+    def compare(
+        self,
+        other: "Illustrator",
+        label_self: str = "condition A",
+        label_other: str = "condition B",
+    ) -> tuple[plt.Figure, plt.Figure, plt.Figure]:
+        """
+        Compare two datasets collected under different inputs.
 
-        # Bounded reliability fraction for display only. NaN propagates,
-        # which we handle explicitly below.
-        r2e = snr / (1.0 + snr)                                 # (N,)
+        Builds three figures — trial-averaged time series, ACF per
+        neuron, and correlation matrices — by reusing the same
+        decomposition each Illustrator already applies on its own.
+        Each figure is self-contained (own title and legend) so callers
+        can display or save them independently.
 
-        # Sort descending by r²_e. NaN ("∞ SNR") sorts to the top.
-        sort_key = np.where(np.isnan(r2e), np.inf, r2e)
-        order = np.argsort(-sort_key)
-        r2e_sorted = r2e[order]
-        is_nan = np.isnan(r2e_sorted)
+        Parameters
+        ----------
+        other : Illustrator
+            Second dataset. Must have the same number of neurons as
+            `self`; trial and timestep counts may differ.
+        label_self, label_other : str
+            Labels shown in titles and legends.
 
-        fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13.5, 4.5))
+        Returns
+        -------
+        (fig_timeseries, fig_acf, fig_correlation)
 
-        # --- Left: bar chart of r²_e --------------------------------
-        bar_colors = [cmap(int(n) % cmap.N) for n in order]
-        # Draw NaN bars at full height with a hatched pattern, so the
-        # neuron is visible rather than a blank slot.
-        bar_heights = np.where(is_nan, 1.0, r2e_sorted)
-        bars = ax_l.bar(
-            np.arange(N), bar_heights,
-            color=bar_colors, edgecolor="0.25", linewidth=0.6,
-        )
-        for i, nan in enumerate(is_nan):
-            if nan:
-                bars[i].set_hatch("///")
-                ax_l.text(
-                    i, 1.02, "∞ SNR",
-                    ha="center", va="bottom", fontsize=7, rotation=90,
+        Raises
+        ------
+        ValueError
+            If `self.neuron_cnt != other.neuron_cnt`. Pairing differently
+            sized populations is meaningless.
+
+        Notes
+        -----
+        Note 1: This method assumes all trials within each dataset share
+        the same input sequence. If trials within a dataset have
+        different inputs, the trial-averaged mean is a meaningless
+        mixture and the comparison will be misleading.
+
+        Note 2: The ACF comparison is a direct test of whether the two
+        inputs excite the same dynamical modes. If the ACFs are
+        identical across conditions, the input change affected the
+        amplitude or operating point of the system but not its temporal
+        structure. If the ACF shapes differ, the inputs are routing
+        through different eigenvalues of A.
+
+        Note 3: The correlation matrix comparison uses the clustering
+        order from `label_self` applied to both panels. The block
+        structure of `label_self` is optimally displayed; `label_other`
+        may or may not show clean blocks under the same ordering, and
+        that difference is itself informative.
+        """
+        if self.neuron_cnt != other.neuron_cnt:
+            raise ValueError(
+                f"compare requires matching neuron counts; self has "
+                f"{self.neuron_cnt}, other has {other.neuron_cnt}."
+            )
+        T = min(self.timestep_cnt, other.timestep_cnt)
+        if self.timestep_cnt != other.timestep_cnt:
+            warnings.warn(
+                f"timestep_cnt differs ({label_self}: {self.timestep_cnt}, "
+                f"{label_other}: {other.timestep_cnt}); truncating to "
+                f"T={T} for all panels.",
+                UserWarning, stacklevel=2,
+            )
+        for label, R in [(label_self, self.trial_cnt),
+                         (label_other, other.trial_cnt)]:
+            if R < 2:
+                warnings.warn(
+                    f"{label} has only {R} trial; band collapses to a "
+                    f"line and ACF is computed over a single trial.",
+                    UserWarning, stacklevel=2,
                 )
-        ax_l.axhline(
-            0.5, color="k", linewidth=0.8, linestyle="--",
-            label="signal = noise",
+        return (
+            self._compare_timeseries(other, label_self, label_other, T),
+            self._compare_acf(other, label_self, label_other, T),
+            self._compare_correlation(other, label_self, label_other, T),
         )
-        ax_l.set_xticks(np.arange(N))
-        ax_l.set_xticklabels([str(n) for n in order], fontsize=8)
-        ax_l.set_xlabel("neuron index (sorted)")
-        ax_l.set_ylabel(r"explainable variance $r^2_e$")
-        ax_l.set_ylim(0, 1.12)
-        ax_l.set_title(f"Signal reliability per neuron (R={R} trials)")
-        ax_l.legend(loc="upper right", fontsize=8, frameon=False)
 
-        # --- Right: trial mean ± 1 SD for top / bottom neurons ------
-        # Only finite-r²_e neurons rank meaningfully; NaN neurons are
-        # "off the scale" reliable and would dominate the comparison.
-        finite_order = order[~is_nan]
-        if len(finite_order) < 6:
-            chosen = list(finite_order)
-        else:
-            chosen = list(finite_order[:3]) + list(finite_order[-3:])
-
+    def _compare_timeseries(self, other, label_self, label_other, T):
+        """Trial-averaged traces with ±1 SD bands, one subplot per neuron."""
+        N = self.neuron_cnt
+        fig, axes = self._neuron_grid(N)
         t = np.arange(T)
-        for n in chosen:
-            color = cmap(int(n) % cmap.N)
-            m = self._trial_mean[:, n]
-            s = self._trial_std[:, n]
-            ax_r.plot(
-                t, m, color=color, linewidth=2.0,
-                label=f"n{n}: r²_e={r2e[n]:.2f}",
-            )
-            ax_r.fill_between(
-                t, m - s, m + s,
-                color=color, alpha=0.20, linewidth=0,
-            )
-        ax_r.set_xlabel("timestep")
-        ax_r.set_ylabel("activity")
-        ax_r.set_title("Top vs bottom reliability — trial mean ± 1 SD")
-        ax_r.legend(fontsize=8, loc="best", frameon=False)
+        cmap = plt.get_cmap("tab20")
+        ms, ss = self._trial_mean[:T], self._trial_std[:T]
+        mo, so = other._trial_mean[:T], other._trial_std[:T]
 
-        fig.tight_layout()
+        for n, ax in enumerate(axes.flat[:N]):
+            color = cmap(n % cmap.N)
+            ax.fill_between(t, ms[:, n] - ss[:, n], ms[:, n] + ss[:, n],
+                            facecolor=color, alpha=0.20, linewidth=0)
+            ax.fill_between(t, mo[:, n] - so[:, n], mo[:, n] + so[:, n],
+                            facecolor=color, alpha=0.10, linewidth=0)
+            ax.plot(t, ms[:, n], color=color, linewidth=2.0, linestyle="-")
+            ax.plot(t, mo[:, n], color=color, linewidth=2.0, linestyle="--")
+            ax.set_title(f"neuron {n}", fontsize=9)
+            ax.tick_params(labelsize=8)
+        self._blank_unused(axes, N)
+
+        fig.supxlabel("timestep", fontsize=9)
+        fig.supylabel("activity", fontsize=9)
+        self._style_legend(fig, label_self, label_other)
+        fig.suptitle(
+            f"Trial-averaged time series ± 1 SD  —  "
+            f"{label_self} (R={self.trial_cnt}) vs "
+            f"{label_other} (R={other.trial_cnt})",
+            fontsize=11,
+        )
+        fig.tight_layout(rect=(0.0, 0.04, 1.0, 1.0))
+        return fig
+
+    def _compare_acf(self, other, label_self, label_other, T):
+        """Pooled ACF per neuron, both conditions on the same axes."""
+        N = self.neuron_cnt
+        max_lag = max(1, T // 4)
+        acf_s = self._acf_pooled(self.observation[:, :T, :], max_lag)
+        acf_o = self._acf_pooled(other.observation[:, :T, :], max_lag)
+        lags = np.arange(max_lag + 1)
+
+        fig, axes = self._neuron_grid(N, sharey=True)
+        cmap = plt.get_cmap("tab20")
+        for n, ax in enumerate(axes.flat[:N]):
+            color = cmap(n % cmap.N)
+            # Light-grey fill between the curves makes
+            # agreement/disagreement readable without mental subtraction.
+            ax.fill_between(lags, acf_s[:, n], acf_o[:, n],
+                            facecolor="0.7", alpha=0.4, linewidth=0)
+            ax.plot(lags, acf_s[:, n], color=color, linewidth=1.5, linestyle="-")
+            ax.plot(lags, acf_o[:, n], color=color, linewidth=1.5, linestyle="--")
+            ax.axhline(0.0, color="k", linewidth=0.6, linestyle=":")
+            ax.set_title(f"neuron {n}", fontsize=9)
+            ax.tick_params(labelsize=8)
+        self._blank_unused(axes, N)
+
+        fig.supxlabel("lag τ", fontsize=9)
+        fig.supylabel("ACF", fontsize=9)
+        self._style_legend(fig, label_self, label_other)
+        fig.suptitle(
+            f"Autocorrelation per neuron  —  "
+            f"{label_self} (R={self.trial_cnt}) vs "
+            f"{label_other} (R={other.trial_cnt})  "
+            f"(T={T}, lags 0..{max_lag})",
+            fontsize=11,
+        )
+        fig.tight_layout(rect=(0.0, 0.04, 1.0, 1.0))
+        return fig
+
+    def _compare_correlation(self, other, label_self, label_other, T):
+        """Two correlation heatmaps, both drawn in `self`'s cluster order."""
+        N = self.neuron_cnt
+        if N < 2:
+            raise ValueError(
+                "compare needs at least 2 neurons to draw correlation matrices."
+            )
+        # Same correlation + constant-detection that
+        # `plot_correlation_matrix` uses; same cluster order helper too.
+        C_s, const_s = self._corrcoef_with_nan(self._trial_mean[:T])
+        C_o, const_o = self._corrcoef_with_nan(other._trial_mean[:T])
+        display_order = (
+            self._cluster_order(C_s)
+            if (~const_s).sum() >= 2 else np.arange(N)
+        )
+
+        const_either = const_s | const_o
+        labels = [f"{n}*" if const_either[n] else str(n)
+                  for n in display_order]
+        side = 0.32 * N + 2.5
+        fig, axes = plt.subplots(1, 2, figsize=(2 * side + 1.5, side + 1.0))
+        cmap = plt.get_cmap("RdBu_r").copy()
+        cmap.set_bad("lightgray")
+
+        im = None
+        for ax, C, label in [(axes[0], C_s, label_self),
+                             (axes[1], C_o, label_other)]:
+            d = C[np.ix_(display_order, display_order)]
+            im = ax.imshow(
+                np.ma.masked_invalid(d), cmap=cmap,
+                vmin=-1.0, vmax=1.0,
+                origin="upper", interpolation="nearest",
+            )
+            ax.set_xticks(np.arange(N))
+            ax.set_yticks(np.arange(N))
+            ax.set_xticklabels(labels, fontsize=8, rotation=90)
+            ax.set_yticklabels(labels, fontsize=8)
+            ax.set_xlabel("neuron")
+            ax.set_ylabel("neuron")
+            ax.set_title(label, fontsize=10)
+
+        cbar = fig.colorbar(
+            im, ax=axes.ravel().tolist(), fraction=0.04, pad=0.04,
+        )
+        cbar.set_label("Pearson correlation")
+        fig.suptitle(
+            f"Correlation matrices  —  {label_self} vs {label_other}  "
+            f"(clustered on {label_self})",
+            fontsize=11,
+        )
+        if const_either.any():
+            idxs = ", ".join(str(int(n)) for n in np.where(const_either)[0])
+            fig.text(
+                0.5, 0.01,
+                f"* constant in time, correlation undefined "
+                f"(neurons: {idxs})",
+                ha="center", fontsize=8, color="0.3",
+            )
+        return fig
+
+    # ------------------------------------------------------------------
+    # Shared static helpers
+    # ------------------------------------------------------------------
+    # Pure utilities used by more than one method. Kept at the bottom
+    # of the class so the public-method narrative reads top-to-bottom.
+
+    @staticmethod
+    def _neuron_grid(n_panels: int, sharey: bool = False,
+                     ncols: int | None = None):
+        """
+        Build a per-neuron subplot grid sized to taste.
+
+        Defaults to ~square, capped at 4 columns wide. Used by every
+        method that draws one subplot per neuron.
+        """
+        if ncols is None:
+            ncols = min(4, n_panels)
+        nrows = int(np.ceil(n_panels / ncols))
+        fig, axes = plt.subplots(
+            nrows, ncols,
+            figsize=(3.2 * ncols, 2.2 * nrows),
+            sharex=True, sharey=sharey, squeeze=False,
+        )
+        return fig, axes
+
+    @staticmethod
+    def _blank_unused(axes, n_panels: int) -> None:
+        """Hide the leftover panels when the grid is not exactly filled."""
+        for ax in axes.flat[n_panels:]:
+            ax.set_visible(False)
+
+    @staticmethod
+    def _style_legend(fig, label_self, label_other):
+        """Figure-level legend that names line style ↔ condition."""
+        handles = [
+            Line2D([0], [0], color="0.25", linewidth=2.0,
+                   linestyle="-", label=label_self),
+            Line2D([0], [0], color="0.25", linewidth=2.0,
+                   linestyle="--", label=label_other),
+        ]
+        fig.legend(handles=handles, loc="lower center", ncol=2,
+                   frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.0))
+
+    @staticmethod
+    def _acf_pooled(obs: np.ndarray, max_lag: int) -> np.ndarray:
+        """
+        Per-neuron ACF for (R, T, N) data, pooled across all trials.
+
+        Pooled μ and Var per neuron, lag-τ expectation over every valid
+        (r, t) pair, biased 1/N normalisation. Constant-in-time neurons
+        get NaN. Shared by `plot_autocorrelation` and `_compare_acf`.
+        """
+        mu = obs.mean(axis=(0, 1))
+        c = obs - mu
+        var = (c * c).mean(axis=(0, 1))
+        safe_var = np.where(var == 0, 1.0, var)
+        acf = np.empty((max_lag + 1, obs.shape[2]))
+        for tau in range(max_lag + 1):
+            prod = c * c if tau == 0 else c[:, :-tau, :] * c[:, tau:, :]
+            acf[tau] = prod.mean(axis=(0, 1))
+        acf /= safe_var
+        acf[:, var == 0] = np.nan
+        return acf
+
+    @staticmethod
+    def _corrcoef_with_nan(
+        data: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Pearson correlation on a (T, N) time series with the same
+        constant-in-time handling as `plot_correlation_matrix`. Returns
+        (C, constant_mask). Shared by `plot_correlation_matrix` and
+        `_compare_correlation`.
+        """
+        temporal_std = data.std(axis=0)
+        scale = np.maximum(np.abs(data).max(axis=0), 1.0)
+        constant = temporal_std <= 1e-12 * scale
+        with np.errstate(invalid="ignore", divide="ignore"):
+            C = np.corrcoef(data.T)
+        if constant.any():
+            C[constant, :] = np.nan
+            C[:, constant] = np.nan
+        return C, constant
+
+    @staticmethod
+    def _cluster_order(C: np.ndarray) -> np.ndarray:
+        """
+        Average-linkage display order from a Pearson matrix.
+
+        Constants (NaN diagonal) are appended after the clustered group
+        so they remain visible. Caller is responsible for checking that
+        at least two non-constant neurons exist.
+        """
+        constant = np.isnan(np.diag(C))
+        valid = np.where(~constant)[0]
+        sub = C[np.ix_(valid, valid)]
+        dist = (1.0 - sub + (1.0 - sub).T) / 2.0
+        np.fill_diagonal(dist, 0.0)
+        dist = np.clip(dist, 0.0, 2.0)
+        Z = linkage(squareform(dist, checks=False), method="average")
+        return np.concatenate(
+            [valid[leaves_list(Z)], np.where(constant)[0]]
+        )
