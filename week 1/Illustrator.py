@@ -149,29 +149,25 @@ class Illustrator:
         fig, axes = self._neuron_grid(n_neurons_plot, ncols=n_cols)
         _, ncols = axes.shape
 
-        # draw each neuron
-        t = np.arange(self.timestep_cnt)                    # x-axis
+        t = np.arange(self.timestep_cnt)                    # x-axis, timestep count
 
         for panel_i, neuron in enumerate(neuron_idx):
-            row, col = divmod(panel_i, ncols)
+            row, col = divmod(panel_i, ncols)               # gives (0,0), (0,1), ...
             ax = axes[row, col]
             color = self._neuron_color(neuron)
 
-            # 4a. Thin per-trial lines.
-            # data[:, :, panel_i] has shape (n_trials_plot, T_steps).
+            # thin per-trial lines
             if show_trials:
                 for tr in range(n_trials_plot):
                     ax.plot(t, data[tr, :, panel_i],
                             color=color, alpha=0.3, linewidth=0.8)
 
-            # 4b. Bold trial-mean.
+            # bold trial-mean
             if show_mean:
                 ax.plot(t, mean_t[:, panel_i],
                         color=color, linewidth=2.0, label="mean")
 
-            # 4c. ±1 SD shaded band (only if defined). Use a neutral gray
-            # with a visible edge so the band's extent reads clearly
-            # against the neuron-coloured mean / per-trial lines.
+            # shaded std band
             if show_band and std_t is not None:
                 ax.fill_between(
                     t,
@@ -184,7 +180,7 @@ class Illustrator:
             ax.set_title(f"neuron {neuron}", fontsize=9)
             ax.tick_params(labelsize=8)
 
-        # 4d. Blank out any unused panels (grid not exactly filled).
+        # blank out any unused panels
         self._blank_unused(axes, n_neurons_plot)
 
         # --- 5. Shared axis labels and title -------------------------------
@@ -192,10 +188,12 @@ class Illustrator:
         self._label_left_column(axes, "activity")
         self._label_bottom_row(axes, "timestep")
 
+
+        ##review##
         title = (f"Time series  "
                  f"({n_trials_plot} trial{'s' if n_trials_plot != 1 else ''}, "
                  f"{n_neurons_plot} neuron{'s' if n_neurons_plot != 1 else ''})")
-        if n_trials_plot == 1 and show_band:
+        if n_trials_plot == 1 and not show_band:
             title += "  [band suppressed: single trial]"
         elif not show_trials and n_trials_plot > self.MAX_TRIALS_OVERLAY:
             title += f"  [per-trial lines hidden: >{self.MAX_TRIALS_OVERLAY} trials]"
@@ -207,9 +205,9 @@ class Illustrator:
     def plot_heatmap(
         self,
         trial_index: int | None = None,
-        neuron_indices=None,
+        neuron_indices: ArrayLike | None = None,
         zscore: bool = False,
-    ):
+    ) -> plt.Figure:
         """
         Show population activity as a (Neurons x Time) heatmap.
 
@@ -226,8 +224,7 @@ class Illustrator:
             If True, z-score each row independently across time and use a
             diverging colormap centred at 0. Useful when neurons differ
             widely in absolute scale and you want to compare temporal
-            dynamics. Rows with zero temporal variance are left at 0
-            (no division by zero).
+            dynamics.
 
         Returns
         -------
@@ -284,8 +281,8 @@ class Illustrator:
     def plot_autocorrelation(
         self,
         max_lag: int | None = None,
-        neuron_indices=None,
-        trial_indices=None,
+        neuron_indices: ArrayLike | None = None,
+        trial_indices: ArrayLike | None = None,
         mode: str = "overlay",
     ):
         """
@@ -302,11 +299,6 @@ class Illustrator:
         biased (1/N normalisation, not 1/(N−1)) — this is the standard
         choice for ACFs and guarantees ACF_n(0) = 1.
 
-        Interpretation: exponential decay → real eigenvalue of A,
-        oscillation with sign changes → complex-conjugate pair, slow /
-        plateaued decay → eigenvalue near 1, near-zero at lag 1 →
-        noise-dominated.
-
         Parameters
         ----------
         max_lag : int, optional
@@ -318,14 +310,13 @@ class Illustrator:
             Which neurons to include. Defaults to all neurons.
         trial_indices : array-like of int, optional
             Which trials to pool over for the ACF estimate. Defaults to
-            all trials. Useful for split-half stationarity checks or
-            comparing ACFs across condition-grouped trial subsets.
+            all trials.
         mode : {"overlay", "subplots", "heatmap"}, default "overlay"
             How to display the (max_lag+1, n_neurons) ACF array.
 
         Returns
         -------
-        matplotlib.figure.Figure
+        plt.Figure
         """
         # --- 1. Resolve and validate neuron / trial selection -------------
         neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
@@ -461,7 +452,7 @@ class Illustrator:
                 Bias-corrected SNR per neuron, in original neuron order.
                 Clipped to >= 0 (negative estimates are sampling noise).
                 Neurons with zero trial-to-trial variability are returned
-                as NaN — technically infinite SNR, i.e. maximally reliable.
+                as NaN — technically infinite SNR.
             fig : matplotlib.figure.Figure or None
                 The diagnostic figure when ``plot=True``, else ``None``.
 
@@ -470,20 +461,6 @@ class Illustrator:
         ValueError
             If `trial_cnt == 1` — trial-to-trial variability is
             undefined with a single trial.
-
-        Notes
-        -----
-        The σ²_noise computed here is the total trial-to-trial
-        variability, which in the underlying dynamical system is a
-        mixture of observation noise v_t and accumulated process noise
-        w_t. It is NOT the observation-noise covariance R from the
-        system model. It answers "how reproducible is this neuron
-        across repeated trials?" — not "what is the sensor noise floor?".
-
-        The decomposition is valid only when all trials share the same
-        input sequence u_t. If trials were collected under different
-        inputs, σ²_noise will absorb input-driven variability,
-        understating noise and overstating signal.
         """
         if self.trial_cnt < 2:
             raise ValueError(
@@ -576,10 +553,10 @@ class Illustrator:
         # Only finite-r²_e neurons rank meaningfully; NaN neurons are
         # "off the scale" reliable and would dominate the comparison.
         finite_order = order[~is_nan]
-        if len(finite_order) < 6:
+        if len(finite_order) < 4:
             chosen = list(finite_order)
         else:
-            chosen = list(finite_order[:3]) + list(finite_order[-3:])
+            chosen = list(finite_order[:2]) + list(finite_order[-2:])
 
         t = np.arange(T)
         for n in chosen:
@@ -738,6 +715,7 @@ class Illustrator:
         return C, fig
 
     # pure shared static helpers kept separate for clarity
+    
     @staticmethod
     def _resolve_indices(indices, axis_size, name):
         if indices is None:
@@ -810,13 +788,11 @@ class Illustrator:
         for ax in axes.flat[n_panels:]:
             ax.set_visible(False)
 
-    _PALETTE = None
+    _PALETTE = plt.get_cmap("tab20")
 
     @classmethod
     def _neuron_color(cls, n):
         """Return a stable tab20 colour for neuron index `n`."""
-        if cls._PALETTE is None:
-            cls._PALETTE = plt.get_cmap("tab20")
         return cls._PALETTE(int(n) % cls._PALETTE.N)
 
     @staticmethod
