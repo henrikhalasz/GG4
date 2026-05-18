@@ -121,27 +121,8 @@ class Illustrator:
         undefined for a single trial.
         """
         # --- 1. Resolve and validate neuron / trial selections --------------
-        if neuron_indices is None:
-            neuron_idx = np.arange(self.neuron_cnt)
-        else:
-            neuron_idx = np.asarray(neuron_indices, dtype=int)
-            if neuron_idx.ndim != 1:
-                raise ValueError("neuron_indices must be 1D")
-            if neuron_idx.min() < 0 or neuron_idx.max() >= self.neuron_cnt:
-                raise ValueError(
-                    f"neuron_indices out of range [0, {self.neuron_cnt - 1}]"
-                )
-
-        if trial_indices is None:
-            trial_idx = np.arange(self.trial_cnt)
-        else:
-            trial_idx = np.asarray(trial_indices, dtype=int)
-            if trial_idx.ndim != 1:
-                raise ValueError("trial_indices must be 1D")
-            if trial_idx.min() < 0 or trial_idx.max() >= self.trial_cnt:
-                raise ValueError(
-                    f"trial_indices out of range [0, {self.trial_cnt - 1}]"
-                )
+        neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
+        trial_idx  = self._resolve_indices(trial_indices,  self.trial_cnt,  "trial_indices")
 
         n_neurons_plot = len(neuron_idx)
         n_trials_plot  = len(trial_idx)
@@ -173,12 +154,11 @@ class Illustrator:
 
         # --- 4. Draw each neuron -------------------------------------------
         t = np.arange(self.timestep_cnt)                    # x-axis
-        cmap = plt.get_cmap("tab20")                        # 20 distinct colours, covers N=16
 
         for panel_i, neuron in enumerate(neuron_idx):
             row, col = divmod(panel_i, ncols)
             ax = axes[row, col]
-            color = cmap(neuron % cmap.N)                   # neuron-id → colour, stable across plots
+            color = self._neuron_color(neuron)
 
             # 4a. Thin per-trial lines.
             # data[:, :, panel_i] has shape (n_trials_plot, T_steps).
@@ -214,12 +194,7 @@ class Illustrator:
         # One y-label on the left column, one x-label on the bottom row.
         for row in range(nrows):
             axes[row, 0].set_ylabel("activity", fontsize=9)
-        for col in range(ncols):
-            # Find the bottom-most visible row in this column.
-            for row in range(nrows - 1, -1, -1):
-                if axes[row, col].get_visible():
-                    axes[row, col].set_xlabel("timestep", fontsize=9)
-                    break
+        self._label_bottom_row(axes, "timestep")
 
         title = (f"Time series  "
                  f"({n_trials_plot} trial{'s' if n_trials_plot != 1 else ''}, "
@@ -254,17 +229,8 @@ class Illustrator:
         matplotlib.figure.Figure
         """
         # --- 1. Select the (N, T) matrix to display -----------------------
-        if trial_index is None:
-            data = self._trial_mean.T                       # (N, T)
-            source = "trial mean"
-        else:
-            if not (0 <= trial_index < self.trial_cnt):
-                raise ValueError(
-                    f"trial_index out of range [0, {self.trial_cnt - 1}]; "
-                    f"got {trial_index}"
-                )
-            data = self.observation[trial_index].T          # (N, T)
-            source = f"trial {trial_index}"
+        data, source = self._select_display_data(trial_index)
+        data = data.T  # (N, T)
 
         # --- 2. Optional per-neuron z-scoring across time -----------------
         if zscore:
@@ -353,27 +319,8 @@ class Illustrator:
         matplotlib.figure.Figure
         """
         # --- 1. Resolve and validate neuron / trial selection -------------
-        if neuron_indices is None:
-            neuron_idx = np.arange(self.neuron_cnt)
-        else:
-            neuron_idx = np.asarray(neuron_indices, dtype=int)
-            if neuron_idx.ndim != 1:
-                raise ValueError("neuron_indices must be 1D")
-            if neuron_idx.min() < 0 or neuron_idx.max() >= self.neuron_cnt:
-                raise ValueError(
-                    f"neuron_indices out of range [0, {self.neuron_cnt - 1}]"
-                )
-
-        if trial_indices is None:
-            trial_idx = np.arange(self.trial_cnt)
-        else:
-            trial_idx = np.asarray(trial_indices, dtype=int)
-            if trial_idx.ndim != 1:
-                raise ValueError("trial_indices must be 1D")
-            if trial_idx.min() < 0 or trial_idx.max() >= self.trial_cnt:
-                raise ValueError(
-                    f"trial_indices out of range [0, {self.trial_cnt - 1}]"
-                )
+        neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
+        trial_idx  = self._resolve_indices(trial_indices,  self.trial_cnt,  "trial_indices")
 
         # --- 2. Default and validate max_lag ------------------------------
         T = self.timestep_cnt
@@ -416,13 +363,12 @@ class Illustrator:
         # --- 4. Plot ------------------------------------------------------
         lags = np.arange(max_lag + 1)
         n_sel = len(neuron_idx)
-        cmap = plt.get_cmap("tab20")
 
         if mode == "overlay":
             fig, ax = plt.subplots(figsize=(7.5, 4.5))
             for i, n in enumerate(neuron_idx):
                 ax.plot(lags, acf[:, i],
-                        color=cmap(int(n) % cmap.N),
+                        color=self._neuron_color(n),
                         linewidth=1.5, label=f"n{n}")
             ax.axhline(0.0, color="k", linewidth=0.6, linestyle="--")
             ax.set_xlabel("lag τ (timesteps)")
@@ -443,18 +389,14 @@ class Illustrator:
                 row, col = divmod(i, ncols)
                 ax = axes[row, col]
                 ax.plot(lags, acf[:, i],
-                        color=cmap(int(n) % cmap.N), linewidth=1.5)
+                        color=self._neuron_color(n), linewidth=1.5)
                 ax.axhline(0.0, color="k", linewidth=0.6, linestyle="--")
                 ax.set_title(f"neuron {n}", fontsize=9)
                 ax.tick_params(labelsize=8)
             self._blank_unused(axes, n_sel)
             for row in range(nrows):
                 axes[row, 0].set_ylabel("ACF", fontsize=9)
-            for col in range(ncols):
-                for row in range(nrows - 1, -1, -1):
-                    if axes[row, col].get_visible():
-                        axes[row, col].set_xlabel("lag τ", fontsize=9)
-                        break
+            self._label_bottom_row(axes, "lag τ")
             fig.suptitle(
                 f"Autocorrelation per neuron  "
                 f"(R={len(trial_idx)}, T={T}, lags 0..{max_lag})",
@@ -488,7 +430,7 @@ class Illustrator:
         fig.tight_layout()
         return fig
 
-    def compute_snr(self, plot: bool = True) -> np.ndarray:
+    def compute_snr(self, plot: bool = True) -> tuple[np.ndarray, plt.Figure | None]:
         """
         Per-neuron signal-to-noise ratio, exploiting the trial axis.
 
@@ -506,11 +448,14 @@ class Illustrator:
 
         Returns
         -------
-        np.ndarray of shape (N,)
-            Bias-corrected SNR per neuron, in original neuron order.
-            Clipped to >= 0 (negative estimates are sampling noise).
-            Neurons with zero trial-to-trial variability are returned
-            as NaN — technically infinite SNR, i.e. maximally reliable.
+        (snr, fig) : tuple
+            snr : np.ndarray of shape (N,)
+                Bias-corrected SNR per neuron, in original neuron order.
+                Clipped to >= 0 (negative estimates are sampling noise).
+                Neurons with zero trial-to-trial variability are returned
+                as NaN — technically infinite SNR, i.e. maximally reliable.
+            fig : matplotlib.figure.Figure or None
+                The diagnostic figure when ``plot=True``, else ``None``.
 
         Raises
         ------
@@ -569,17 +514,14 @@ class Illustrator:
         snr = np.clip(snr, a_min=0.0, a_max=None)
         snr[zero_noise] = np.nan
 
-        if plot:
-            self._plot_snr(snr)
+        fig = self._plot_snr(snr) if plot else None
+        return snr, fig
 
-        return snr
-
-    def _plot_snr(self, snr: np.ndarray) -> None:
+    def _plot_snr(self, snr: np.ndarray) -> plt.Figure:
         """Render the two-panel SNR diagnostic for `compute_snr`."""
         N = self.neuron_cnt
         R = self.trial_cnt
         T = self.timestep_cnt
-        cmap = plt.get_cmap("tab20")
 
         # Bounded reliability fraction for display only. NaN propagates,
         # which we handle explicitly below.
@@ -594,7 +536,7 @@ class Illustrator:
         fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13.5, 4.5))
 
         # --- Left: bar chart of r²_e --------------------------------
-        bar_colors = [cmap(int(n) % cmap.N) for n in order]
+        bar_colors = [self._neuron_color(n) for n in order]
         # Draw NaN bars at full height with a hatched pattern, so the
         # neuron is visible rather than a blank slot.
         bar_heights = np.where(is_nan, 1.0, r2e_sorted)
@@ -632,7 +574,7 @@ class Illustrator:
 
         t = np.arange(T)
         for n in chosen:
-            color = cmap(int(n) % cmap.N)
+            color = self._neuron_color(n)
             m = self._trial_mean[:, n]
             s = self._trial_std[:, n]
             ax_r.plot(
@@ -649,11 +591,11 @@ class Illustrator:
         ax_r.legend(fontsize=8, loc="best", frameon=False)
 
         fig.tight_layout()
+        return fig
 
     def plot_correlation_matrix(
         self,
         trial_index: int | None = None,
-        zscore: bool = False,
         cluster: bool = True,
     ) -> tuple[plt.Figure, np.ndarray]:
         """
@@ -670,13 +612,6 @@ class Illustrator:
         ----------
         trial_index : int, optional
             Single trial to use. Defaults to the trial-averaged signal.
-        zscore : bool, default False
-            Z-score each neuron's time series before computing. This is
-            mathematically a no-op — `np.corrcoef` already standardises
-            internally — and exists only for API symmetry with
-            `plot_heatmap` and to make the standardisation explicit at
-            the call site. The returned correlation values are
-            identical with or without this flag.
         cluster : bool, default True
             If True, reorder rows/columns using average-linkage
             hierarchical clustering on (1 - C) so co-correlated neurons
@@ -724,36 +659,18 @@ class Illustrator:
                 "no information."
             )
 
-        if trial_index is None:
-            data = self._trial_mean                  # (T, N)
-            source = "trial mean"
-        else:
-            if not (0 <= trial_index < self.trial_cnt):
-                raise ValueError(
-                    f"trial_index out of range [0, {self.trial_cnt - 1}]; "
-                    f"got {trial_index}"
-                )
-            data = self.observation[trial_index]     # (T, N)
-            source = f"trial {trial_index}"
+        data, source = self._select_display_data(trial_index)
 
-        # --- 2. Optional z-scoring (no-op for the returned C; corrcoef
-        #         standardises internally). Kept for API symmetry with
-        #         plot_heatmap, and explicit at the call site.
-        if zscore:
-            temporal_std = data.std(axis=0, ddof=1)
-            safe_std = np.where(temporal_std == 0, 1.0, temporal_std)
-            data = (data - data.mean(axis=0)) / safe_std
-
-        # --- 3. Correlation matrix + constant-neuron mask -----------------
+        # --- 2. Correlation matrix + constant-neuron mask -----------------
         C, constant = self._corrcoef_with_nan(data)
 
-        # --- 4. Hierarchical clustering for display order -----------------
+        # --- 3. Hierarchical clustering for display order -----------------
         do_cluster = cluster and (~constant).sum() >= 2
         display_order = (
             self._cluster_order(C) if do_cluster else np.arange(N)
         )
 
-        # --- 5. Plot ------------------------------------------------------
+        # --- 4. Plot ------------------------------------------------------
         display = C[np.ix_(display_order, display_order)]
         cmap = plt.get_cmap("RdBu_r").copy()
         cmap.set_bad("lightgray")                    # NaN cells distinct
@@ -803,8 +720,43 @@ class Illustrator:
     # ------------------------------------------------------------------
     # Shared static helpers
     # ------------------------------------------------------------------
-    # Pure utilities used by more than one method. Kept at the bottom
-    # of the class so the public-method narrative reads top-to-bottom.
+    # Pure helpers — kept separate for clarity, regardless of caller
+    # count. Placed at the bottom so public methods read top-to-bottom.
+
+    def _resolve_indices(self, indices, axis_size, name):
+        if indices is None:
+            return np.arange(axis_size)
+        arr = np.asarray(indices, dtype=int)
+        if arr.ndim != 1:
+            raise ValueError(f"{name} must be 1D")
+        if arr.size and (arr.min() < 0 or arr.max() >= axis_size):
+            raise ValueError(
+                f"{name} out of range [0, {axis_size - 1}]"
+            )
+        return arr
+
+    def _select_display_data(self, trial_index):
+        """
+        Return ((T, N) array, source label) for either the trial mean
+        or a single trial. Validates `trial_index` if provided.
+        """
+        if trial_index is None:
+            return self._trial_mean, "trial mean"
+        if not (0 <= trial_index < self.trial_cnt):
+            raise ValueError(
+                f"trial_index out of range [0, {self.trial_cnt - 1}]; "
+                f"got {trial_index}"
+            )
+        return self.observation[trial_index], f"trial {trial_index}"
+
+    @staticmethod
+    def _label_bottom_row(axes, label):
+        nrows, ncols = axes.shape
+        for col in range(ncols):
+            for row in range(nrows - 1, -1, -1):
+                if axes[row, col].get_visible():
+                    axes[row, col].set_xlabel(label, fontsize=9)
+                    break
 
     @staticmethod
     def _neuron_grid(n_panels: int, sharey: bool = False,
@@ -830,6 +782,13 @@ class Illustrator:
         """Hide the leftover panels when the grid is not exactly filled."""
         for ax in axes.flat[n_panels:]:
             ax.set_visible(False)
+
+    _PALETTE = plt.get_cmap("tab20")
+
+    @classmethod
+    def _neuron_color(cls, n):
+        """Return a stable tab20 colour for neuron index `n`."""
+        return cls._PALETTE(int(n) % cls._PALETTE.N)
 
     @staticmethod
     def _acf_pooled(obs: np.ndarray, max_lag: int) -> np.ndarray:
