@@ -11,8 +11,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import leaves_list, linkage
 from scipy.spatial.distance import squareform
+from numpy.typing import ArrayLike
 
-# A neuron is treated as constant (zero variance) when its std is below
+# a neuron is treated as constant (zero variance) when its std is below
 # this fraction of its peak absolute value. Mirrors the guard used in
 # _corrcoef_with_nan and applied consistently across SNR and ACF helpers.
 _CONSTANT_TOLERANCE = 1e-12
@@ -28,8 +29,8 @@ class Illustrator:
     axis 2 is always neurons.
     """
 
-    # Beyond this many trials, per-trial lines turn into spaghetti and
-    # we default to mean + band only. Caller can override via show_trials.
+    # beyond this many trials, per-trial lines are omitted
+    # caller can override via show_trials.
     MAX_TRIALS_OVERLAY = 10
 
     def __init__(self, observation: np.ndarray):
@@ -66,14 +67,11 @@ class Illustrator:
         if not np.all(np.isfinite(observation)):
             raise ValueError("observation contains NaN or Inf values")
 
-        # Store as float64 for numerical stability in later reductions
+        # store as float64 for numerical stability in later reductions
         self.observation = np.asarray(observation, dtype=np.float64)
         self.trial_cnt, self.timestep_cnt, self.neuron_cnt = self.observation.shape
 
-        # Cache once: trial-averaged signal and trial-to-trial std.
-        # ddof is clamped so single-trial input gives an exact-zero std
-        # (ddof=0 → divide by 1) instead of NaN (ddof=1 → divide by 0).
-        # With trial_cnt >= 2 this is the usual sample std.
+        # cache once: trial-averaged signal and trial-to-trial std.
         self._trial_mean = self.observation.mean(axis=0)              # (T_steps, N)
         self._trial_std  = self.observation.std(
             axis=0, ddof=min(1, self.trial_cnt - 1),
@@ -81,13 +79,13 @@ class Illustrator:
 
     def plot_timeseries(
         self,
-        neuron_indices=None,
-        trial_indices=None,
+        neuron_indices: ArrayLike | None = None,
+        trial_indices: ArrayLike | None = None,
         show_trials: bool | None = None,
         show_mean: bool = True,
         show_band: bool = True,
         n_cols: int | None = None,
-    ):
+    ) -> plt.Figure:
         """
         Plot neural activity over time, one subplot per neuron.
 
@@ -117,47 +115,41 @@ class Illustrator:
 
         Returns
         -------
-        matplotlib.figure.Figure
+        plt.Figure
         The figure, so the caller can save or further customise it.
 
         Notes
         -----
-        Uses sample standard deviation (ddof=1) for the band, which is
-        undefined for a single trial.
+        Uses sample standard deviation (ddof=1) for the band - unbiased estimator
         """
-        # --- 1. Resolve and validate neuron / trial selections --------------
+        # resolve and validate neuron/trial selections
         neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
         trial_idx  = self._resolve_indices(trial_indices,  self.trial_cnt,  "trial_indices")
 
         n_neurons_plot = len(neuron_idx)
         n_trials_plot  = len(trial_idx)
 
-        # Auto-decide whether to overlay per-trial lines. With too many
-        # trials they pile up into spaghetti and obscure the mean/band.
+        # decide whether to show per-trial lines
         if show_trials is None:
             show_trials = n_trials_plot <= self.MAX_TRIALS_OVERLAY
 
-        # --- 2. Slice the data once ----------------------------------------
-        # Fancy indexing: pick a subset of trials AND a subset of neurons.
-        # np.ix_ gives the cartesian product so shapes broadcast cleanly.
-        # data shape: (n_trials_plot, T_steps, n_neurons_plot)
+        # slice the data once
         data = self.observation[np.ix_(trial_idx,
                                         np.arange(self.timestep_cnt),
-                                        neuron_idx)]
+                                        neuron_idx)]       # (n_trials_plot, T_steps, n_neurons_plot)
 
-        # Trial-mean and trial-std OVER THE SELECTED TRIALS.
-        # We don't reuse self._trial_mean here because that's over all trials.
+        # mean and std over selected trials
         mean_t = data.mean(axis=0)                          # (T_steps, n_neurons_plot)
         if n_trials_plot >= 2:
             std_t = data.std(axis=0, ddof=1)                # (T_steps, n_neurons_plot)
         else:
-            std_t = None                                    # band undefined
+            std_t = None                                    # band suppressed
 
-        # --- 3. Lay out the grid -------------------------------------------
+        # lay out the grid 
         fig, axes = self._neuron_grid(n_neurons_plot, ncols=n_cols)
         _, ncols = axes.shape
 
-        # --- 4. Draw each neuron -------------------------------------------
+        # draw each neuron
         t = np.arange(self.timestep_cnt)                    # x-axis
 
         for panel_i, neuron in enumerate(neuron_idx):
@@ -745,12 +737,7 @@ class Illustrator:
 
         return C, fig
 
-    # ------------------------------------------------------------------
-    # Shared static helpers
-    # ------------------------------------------------------------------
-    # Pure helpers — kept separate for clarity, regardless of caller
-    # count. Placed at the bottom so public methods read top-to-bottom.
-
+    # pure shared static helpers kept separate for clarity
     @staticmethod
     def _resolve_indices(indices, axis_size, name):
         if indices is None:
@@ -765,8 +752,8 @@ class Illustrator:
                 f"{name} out of range [{-axis_size}, {axis_size - 1}]"
             )
         arr = np.where(arr < 0, arr + axis_size, arr)
-        _, keep = np.unique(arr, return_index=True)
-        return arr[np.sort(keep)]
+        _, keep = np.unique(arr, return_index=True) # preserve order, drop duplicates
+        return arr[np.sort(keep)] # unique values in original order
 
     def _select_display_data(self, trial_index):
         """
