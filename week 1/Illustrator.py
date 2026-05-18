@@ -12,6 +12,11 @@ import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import leaves_list, linkage
 from scipy.spatial.distance import squareform
 
+# A neuron is treated as constant (zero variance) when its std is below
+# this fraction of its peak absolute value. Mirrors the guard used in
+# _corrcoef_with_nan and applied consistently across SNR and ACF helpers.
+_CONSTANT_TOLERANCE = 1e-12
+
 
 class Illustrator:
     """
@@ -81,7 +86,7 @@ class Illustrator:
         show_trials: bool | None = None,
         show_mean: bool = True,
         show_band: bool = True,
-        ncols: int | None = None,
+        n_cols: int | None = None,
     ):
         """
         Plot neural activity over time, one subplot per neuron.
@@ -106,7 +111,7 @@ class Illustrator:
         show_band : bool, default True
             Whether to shade ±1 SD across trials. Automatically suppressed
             when fewer than 2 trials are selected.
-        ncols : int, optional
+        n_cols : int, optional
             Number of columns in the subplot grid. Defaults to an
             approximately-square layout, capped at 4 columns.
 
@@ -149,8 +154,8 @@ class Illustrator:
             std_t = None                                    # band undefined
 
         # --- 3. Lay out the grid -------------------------------------------
-        fig, axes = self._neuron_grid(n_neurons_plot, ncols=ncols)
-        nrows, ncols = axes.shape
+        fig, axes = self._neuron_grid(n_neurons_plot, ncols=n_cols)
+        _, ncols = axes.shape
 
         # --- 4. Draw each neuron -------------------------------------------
         t = np.arange(self.timestep_cnt)                    # x-axis
@@ -192,8 +197,7 @@ class Illustrator:
 
         # --- 5. Shared axis labels and title -------------------------------
         # One y-label on the left column, one x-label on the bottom row.
-        for row in range(nrows):
-            axes[row, 0].set_ylabel("activity", fontsize=9)
+        self._label_left_column(axes, "activity")
         self._label_bottom_row(axes, "timestep")
 
         title = (f"Time series  "
@@ -208,7 +212,12 @@ class Illustrator:
         fig.tight_layout()
         return fig
 
-    def plot_heatmap(self, trial_index: int | None = None, zscore: bool = False):
+    def plot_heatmap(
+        self,
+        trial_index: int | None = None,
+        neuron_indices=None,
+        zscore: bool = False,
+    ):
         """
         Show population activity as a (Neurons x Time) heatmap.
 
@@ -217,6 +226,10 @@ class Illustrator:
         trial_index : int, optional
             Which trial to display. If None (default), the trial-averaged
             signal is shown.
+        neuron_indices : array-like of int, optional
+            Which neurons to include. Defaults to all neurons. Pass the
+            output of ``np.where(snr > threshold)[0]`` from
+            ``compute_snr`` to restrict to reliable neurons.
         zscore : bool, default False
             If True, z-score each row independently across time and use a
             diverging colormap centred at 0. Useful when neurons differ
@@ -229,12 +242,13 @@ class Illustrator:
         matplotlib.figure.Figure
         """
         # --- 1. Select the (N, T) matrix to display -----------------------
+        neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
         data, source = self._select_display_data(trial_index)
-        data = data.T  # (N, T)
+        data = data[:, neuron_idx].T  # (N_sel, T)
 
         # --- 2. Optional per-neuron z-scoring across time -----------------
         if zscore:
-            row_mean = data.mean(axis=1, keepdims=True)     # (N, 1)
+            row_mean = data.mean(axis=1, keepdims=True)     # (N_sel, 1)
             row_std  = data.std(axis=1, ddof=1, keepdims=True)
             # Guard zero-variance rows: keep them at 0 instead of NaN/inf.
             safe_std = np.where(row_std == 0, 1.0, row_std)
@@ -247,11 +261,13 @@ class Illustrator:
             display = data
             cmap = "viridis"
             vmin, vmax = float(display.min()), float(display.max())
+            if vmin == vmax:
+                vmin, vmax = vmin - 1.0, vmax + 1.0
             cbar_label = "activity"
 
         # --- 3. Draw -------------------------------------------------------
-        # Height scales with neuron count so tick labels stay readable.
-        fig, ax = plt.subplots(figsize=(8, 0.3 * self.neuron_cnt + 1.5))
+        n_sel = len(neuron_idx)
+        fig, ax = plt.subplots(figsize=(8, 0.3 * n_sel + 1.5))
         im = ax.imshow(
             display, aspect="auto", cmap=cmap,
             vmin=vmin, vmax=vmax,
@@ -260,7 +276,8 @@ class Illustrator:
 
         ax.set_xlabel("timestep")
         ax.set_ylabel("neuron")
-        ax.set_yticks(np.arange(self.neuron_cnt))
+        ax.set_yticks(np.arange(n_sel))
+        ax.set_yticklabels([str(n) for n in neuron_idx])
         title = f"Population activity - {source}"
         if zscore:
             title += " (z-scored per neuron)"
@@ -384,7 +401,7 @@ class Illustrator:
 
         elif mode == "subplots":
             fig, axes = self._neuron_grid(n_sel, sharey=True)
-            nrows, ncols = axes.shape
+            _, ncols = axes.shape
             for i, n in enumerate(neuron_idx):
                 row, col = divmod(i, ncols)
                 ax = axes[row, col]
@@ -394,8 +411,7 @@ class Illustrator:
                 ax.set_title(f"neuron {n}", fontsize=9)
                 ax.tick_params(labelsize=8)
             self._blank_unused(axes, n_sel)
-            for row in range(nrows):
-                axes[row, 0].set_ylabel("ACF", fontsize=9)
+            self._label_left_column(axes, "ACF")
             self._label_bottom_row(axes, "lag τ")
             fig.suptitle(
                 f"Autocorrelation per neuron  "
@@ -430,7 +446,7 @@ class Illustrator:
         fig.tight_layout()
         return fig
 
-    def compute_snr(self, plot: bool = True) -> tuple[np.ndarray, plt.Figure | None]:
+    def compute_snr(self, plot: bool = False) -> tuple[np.ndarray, plt.Figure | None]:
         """
         Per-neuron signal-to-noise ratio, exploiting the trial axis.
 
@@ -442,7 +458,7 @@ class Illustrator:
 
         Parameters
         ----------
-        plot : bool, default True
+        plot : bool, default False
             Whether to draw the diagnostic plot. The array is returned
             regardless of this flag.
 
@@ -508,7 +524,8 @@ class Illustrator:
         # those are perfectly reproducible (∞ SNR) and become NaN so
         # the caller can spot them. Clip negative SNR (sampling noise
         # around zero) to 0; NaN passes through clip unchanged.
-        zero_noise = sigma2_noise == 0
+        scale = np.maximum(np.abs(self.observation).max(axis=(0, 1)), 1.0)
+        zero_noise = np.sqrt(sigma2_noise) <= _CONSTANT_TOLERANCE * scale
         safe_noise = np.where(zero_noise, 1.0, sigma2_noise)
         snr = sigma2_signal / safe_noise
         snr = np.clip(snr, a_min=0.0, a_max=None)
@@ -596,6 +613,7 @@ class Illustrator:
     def plot_correlation_matrix(
         self,
         trial_index: int | None = None,
+        neuron_indices=None,
         cluster: bool = True,
     ) -> tuple[plt.Figure, np.ndarray]:
         """
@@ -612,6 +630,11 @@ class Illustrator:
         ----------
         trial_index : int, optional
             Single trial to use. Defaults to the trial-averaged signal.
+        neuron_indices : array-like of int, optional
+            Which neurons to include. Defaults to all neurons. Pass the
+            output of ``np.where(snr > threshold)[0]`` from
+            ``compute_snr`` to restrict to reliable neurons before
+            computing the correlation structure.
         cluster : bool, default True
             If True, reorder rows/columns using average-linkage
             hierarchical clustering on (1 - C) so co-correlated neurons
@@ -621,15 +644,16 @@ class Illustrator:
 
         Returns
         -------
-        (fig, C) : (matplotlib.figure.Figure, np.ndarray of shape (N, N))
-            `C[i, j]` is the Pearson correlation between neuron i and
-            neuron j in original neuron order. Rows/columns for
-            constant-in-time neurons are NaN.
+        (C, fig) : (np.ndarray of shape (N_sel, N_sel), matplotlib.figure.Figure)
+            `C[i, j]` is the Pearson correlation between selected neuron i
+            and selected neuron j, in the order given by `neuron_indices`.
+            Rows/columns for constant-in-time neurons are NaN.
 
         Raises
         ------
         ValueError
-            If `neuron_cnt < 2`, or if `trial_index` is out of range.
+            If fewer than 2 neurons are selected, or if `trial_index` is
+            out of range.
 
         Notes
         -----
@@ -650,8 +674,11 @@ class Illustrator:
         It reflects shared input from the hidden state x_t through the
         observation matrix C, not a direct neuron-to-neuron coupling.
         """
+        neuron_idx = self._resolve_indices(
+            neuron_indices, self.neuron_cnt, "neuron_indices"
+        )
         # --- 1. Validate ---------------------------------------------------
-        N = self.neuron_cnt
+        N = len(neuron_idx)
         if N < 2:
             raise ValueError(
                 "plot_correlation_matrix requires at least 2 neurons; "
@@ -660,6 +687,7 @@ class Illustrator:
             )
 
         data, source = self._select_display_data(trial_index)
+        data = data[:, neuron_idx]   # (T, N_sel)
 
         # --- 2. Correlation matrix + constant-neuron mask -----------------
         C, constant = self._corrcoef_with_nan(data)
@@ -715,7 +743,7 @@ class Illustrator:
         else:
             fig.tight_layout()
 
-        return fig, C
+        return C, fig
 
     # ------------------------------------------------------------------
     # Shared static helpers
@@ -723,17 +751,22 @@ class Illustrator:
     # Pure helpers — kept separate for clarity, regardless of caller
     # count. Placed at the bottom so public methods read top-to-bottom.
 
-    def _resolve_indices(self, indices, axis_size, name):
+    @staticmethod
+    def _resolve_indices(indices, axis_size, name):
         if indices is None:
             return np.arange(axis_size)
         arr = np.asarray(indices, dtype=int)
         if arr.ndim != 1:
             raise ValueError(f"{name} must be 1D")
-        if arr.size and (arr.min() < 0 or arr.max() >= axis_size):
+        if arr.size == 0:
+            raise ValueError(f"{name} must not be empty")
+        if arr.min() < -axis_size or arr.max() >= axis_size:
             raise ValueError(
-                f"{name} out of range [0, {axis_size - 1}]"
+                f"{name} out of range [{-axis_size}, {axis_size - 1}]"
             )
-        return arr
+        arr = np.where(arr < 0, arr + axis_size, arr)
+        _, keep = np.unique(arr, return_index=True)
+        return arr[np.sort(keep)]
 
     def _select_display_data(self, trial_index):
         """
@@ -742,12 +775,19 @@ class Illustrator:
         """
         if trial_index is None:
             return self._trial_mean, "trial mean"
-        if not (0 <= trial_index < self.trial_cnt):
+        if not (-self.trial_cnt <= trial_index < self.trial_cnt):
             raise ValueError(
-                f"trial_index out of range [0, {self.trial_cnt - 1}]; "
-                f"got {trial_index}"
+                f"trial_index out of range [{-self.trial_cnt}, "
+                f"{self.trial_cnt - 1}]; got {trial_index}"
             )
+        if trial_index < 0:
+            trial_index += self.trial_cnt
         return self.observation[trial_index], f"trial {trial_index}"
+
+    @staticmethod
+    def _label_left_column(axes, label):
+        for row in range(axes.shape[0]):
+            axes[row, 0].set_ylabel(label, fontsize=9)
 
     @staticmethod
     def _label_bottom_row(axes, label):
@@ -783,11 +823,13 @@ class Illustrator:
         for ax in axes.flat[n_panels:]:
             ax.set_visible(False)
 
-    _PALETTE = plt.get_cmap("tab20")
+    _PALETTE = None
 
     @classmethod
     def _neuron_color(cls, n):
         """Return a stable tab20 colour for neuron index `n`."""
+        if cls._PALETTE is None:
+            cls._PALETTE = plt.get_cmap("tab20")
         return cls._PALETTE(int(n) % cls._PALETTE.N)
 
     @staticmethod
@@ -799,16 +841,19 @@ class Illustrator:
         (r, t) pair, biased 1/N normalisation. Constant-in-time neurons
         get NaN. Used by `plot_autocorrelation`.
         """
+        R, T = obs.shape[:2]
         mu = obs.mean(axis=(0, 1))
         c = obs - mu
         var = (c * c).mean(axis=(0, 1))
-        safe_var = np.where(var == 0, 1.0, var)
+        scale = np.maximum(np.abs(obs).max(axis=(0, 1)), 1.0)
+        constant = np.sqrt(var) <= _CONSTANT_TOLERANCE * scale
+        safe_var = np.where(constant, 1.0, var)
         acf = np.empty((max_lag + 1, obs.shape[2]))
         for tau in range(max_lag + 1):
             prod = c * c if tau == 0 else c[:, :-tau, :] * c[:, tau:, :]
-            acf[tau] = prod.mean(axis=(0, 1))
+            acf[tau] = prod.sum(axis=(0, 1)) / (R * T)
         acf /= safe_var
-        acf[:, var == 0] = np.nan
+        acf[:, constant] = np.nan
         return acf
 
     @staticmethod
@@ -816,13 +861,15 @@ class Illustrator:
         data: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Pearson correlation on a (T, N) time series with the same
-        constant-in-time handling as `plot_correlation_matrix`. Returns
-        (C, constant_mask). Used by `plot_correlation_matrix`.
+        Pearson correlation on a (T, N) time series. Neurons whose
+        temporal std is effectively zero (≤ 1e-12 × peak absolute
+        value) are flagged as constant; their rows and columns of C
+        are masked with NaN. Returns (C, constant_mask).
+        Used by `plot_correlation_matrix`.
         """
         temporal_std = data.std(axis=0)
         scale = np.maximum(np.abs(data).max(axis=0), 1.0)
-        constant = temporal_std <= 1e-12 * scale
+        constant = temporal_std <= _CONSTANT_TOLERANCE * scale
         with np.errstate(invalid="ignore", divide="ignore"):
             C = np.corrcoef(data.T)
         if constant.any():
