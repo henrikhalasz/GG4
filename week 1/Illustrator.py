@@ -228,7 +228,7 @@ class Illustrator:
 
         Returns
         -------
-        matplotlib.figure.Figure
+        plt.Figure
         """
         # --- 1. Select the (N, T) matrix to display -----------------------
         neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
@@ -284,7 +284,7 @@ class Illustrator:
         neuron_indices: ArrayLike | None = None,
         trial_indices: ArrayLike | None = None,
         mode: str = "overlay",
-    ):
+    ) -> plt.Figure:
         """
         Plot the temporal autocorrelation function (ACF) per neuron.
 
@@ -431,36 +431,41 @@ class Illustrator:
 
     def compute_snr(self, plot: bool = False) -> tuple[np.ndarray, plt.Figure | None]:
         """
-        Per-neuron signal-to-noise ratio, exploiting the trial axis.
+        Computes the bias-corrected signal-to-noise ratio (SNR) for each neuron.
 
-        Decomposes each neuron's variability into (a) variance shared
-        across trials at matched timesteps — "signal" — and (b)
-        trial-to-trial variability around the trial mean — "noise".
-        The ratio quantifies how reproducible the neuron is across
-        repeated trials.
+        This method implements the Sahani-Linden (2003) signal power estimator.
+        It decomposes a neuron's total variability into a deterministic response 
+        ("signal") and trial-to-trial fluctuations ("noise"). Because the temporal 
+        variance of the trial mean is artificially inflated by noise, this method 
+        subtracts the expected noise contamination to return an unbiased estimate 
+        of the true signal variance.
 
         Parameters
         ----------
         plot : bool, default False
-            Whether to draw the diagnostic plot. The array is returned
-            regardless of this flag.
+            If True, generates and returns a diagnostic plot of the SNR values.
 
         Returns
         -------
-        (snr, fig) : tuple
-            snr : np.ndarray of shape (N,)
-                Bias-corrected SNR per neuron, in original neuron order.
-                Clipped to >= 0 (negative estimates are sampling noise).
-                Neurons with zero trial-to-trial variability are returned
-                as NaN — technically infinite SNR.
-            fig : matplotlib.figure.Figure or None
-                The diagnostic figure when ``plot=True``, else ``None``.
+        snr : np.ndarray
+            A 1D array of shape (N,) containing the estimated SNR per neuron, 
+            ordered identically to the input data. 
+            
+            - Values are clipped to a minimum of 0.0. (Because the bias correction 
+              subtracts two random variables, true zero-signal neurons can yield 
+              meaningless negative variances due to finite sampling).
+            - Neurons with exactly zero trial-to-trial noise yield a division 
+              by zero and are returned as `np.nan` (technically infinite SNR, 
+              meaning the response is perfectly reproducible).
+              
+        fig : plt.Figure or None
+            The diagnostic figure if `plot=True`, otherwise None.
 
         Raises
         ------
         ValueError
-            If `trial_cnt == 1` — trial-to-trial variability is
-            undefined with a single trial.
+            If the dataset contains fewer than 2 trials. Inter-trial noise 
+            variance cannot be calculated from a single trial.
         """
         if self.trial_cnt < 2:
             raise ValueError(
@@ -582,7 +587,7 @@ class Illustrator:
     def plot_correlation_matrix(
         self,
         trial_index: int | None = None,
-        neuron_indices=None,
+        neuron_indices: ArrayLike | None = None,
         cluster: bool = True,
     ) -> tuple[plt.Figure, np.ndarray]:
         """
@@ -613,7 +618,7 @@ class Illustrator:
 
         Returns
         -------
-        (C, fig) : (np.ndarray of shape (N_sel, N_sel), matplotlib.figure.Figure)
+        (C, fig) : (np.ndarray of shape (N_sel, N_sel), plt.Figure)
             `C[i, j]` is the Pearson correlation between selected neuron i
             and selected neuron j, in the order given by `neuron_indices`.
             Rows/columns for constant-in-time neurons are NaN.
