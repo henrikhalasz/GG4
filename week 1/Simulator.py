@@ -23,12 +23,9 @@ class Simulator:
         self.Q = np.asarray(Q, dtype=float)
         self.R = np.asarray(R, dtype=float)
 
-        if self.A.ndim != 2 or self.A.shape[0] != self.A.shape[1]:
-            raise ValueError(f"A must be square; got {self.A.shape}")
-        if self.B.ndim != 2:
-            raise ValueError(f"B must be 2D; got {self.B.shape}")
-        if self.C.ndim != 2:
-            raise ValueError(f"C must be 2D; got {self.C.shape}")
+        for name, arr in (("A", self.A), ("B", self.B), ("C", self.C)):
+            if arr.ndim != 2:
+                raise ValueError(f"{name} must be 2-D; got shape {arr.shape}")
 
         self.state_dim = self.A.shape[0]
         self.input_dim = self.B.shape[1]
@@ -40,15 +37,11 @@ class Simulator:
 
     def _validate_shapes(self) -> None:
         n, m, p = self.state_dim, self.input_dim, self.obs_dim
-        expected = {
-            "A": ((n, n), self.A.shape),
-            "B": ((n, m), self.B.shape),
-            "C": ((p, n), self.C.shape),
-            "Q": ((n, n), self.Q.shape),
-            "R": ((p, p), self.R.shape),
-            "x0": ((n,), self.x0.shape),
-        }
-        for name, (want, got) in expected.items():
+        for name, want, got in [
+            ("A",  (n, n), self.A.shape),  ("B", (n, m), self.B.shape),
+            ("C",  (p, n), self.C.shape),  ("Q", (n, n), self.Q.shape),
+            ("R",  (p, p), self.R.shape),  ("x0", (n,),  self.x0.shape),
+        ]:
             if got != want:
                 raise ValueError(f"{name} must have shape {want}; got {got}")
 
@@ -74,10 +67,9 @@ class Simulator:
         x = np.asarray(x, dtype=float)
         u = np.asarray(u, dtype=float)
 
-        if x.shape != (self.state_dim,):
-            raise ValueError(f"x must have shape {(self.state_dim,)}; got {x.shape}")
-        if u.shape != (self.input_dim,):
-            raise ValueError(f"u must have shape {(self.input_dim,)}; got {u.shape}")
+        for name, arr, dim in (("x", x, self.state_dim), ("u", u, self.input_dim)):
+            if arr.shape != (dim,):
+                raise ValueError(f"{name} must have shape {(dim,)}; got {arr.shape}")
 
         o = self.rng.multivariate_normal(np.zeros(self.obs_dim), self.R)
         w = self.rng.multivariate_normal(np.zeros(self.state_dim), self.Q)
@@ -112,11 +104,7 @@ class Simulator:
         _check_positive_int("T", T)
 
         results = [self.simulate(T, U=U, x0=x0) for _ in range(trial_count)]
-        return {
-            "x": np.stack([r["x"] for r in results]),
-            "y": np.stack([r["y"] for r in results]),
-            "u": np.stack([r["u"] for r in results]),
-        }
+        return {k: np.stack([r[k] for r in results]) for k in ("x", "y", "u")}
 
 
 LinearStateSpaceSimulator = Simulator
