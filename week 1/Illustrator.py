@@ -609,7 +609,8 @@ class Illustrator:
         ax_r.set_xlabel("timestep")
         ax_r.set_ylabel("activity")
         ax_r.set_title("Top vs bottom reliability — trial mean ± 1 SD")
-        ax_r.legend(fontsize=8, loc="best", frameon=False)
+        if chosen:
+            ax_r.legend(fontsize=8, loc="best", frameon=False)
 
         fig.tight_layout()
         return fig
