@@ -216,6 +216,9 @@ def default_neural_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simu
     theta = 2 * np.pi / period
     c, s = np.cos(theta), np.sin(theta)
 
+    # State transition: top-left 2x2 is a stable oscillation (period 20, radius 0.97);
+    # bottom-right entries are two decay modes (slow 0.98, fast 0.75);
+    # off-diagonal 0.05 entries add weak coupling from oscillatory to decay modes.
     A = np.array([
         [radius * c, -radius * s, 0.00, 0.00],
         [radius * s,  radius * c, 0.00, 0.00],
@@ -223,6 +226,8 @@ def default_neural_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simu
         [0.00,        0.05,       0.00, 0.75],
     ])
 
+    # Input matrix: each input channel drives one oscillatory dimension directly
+    # and its paired decay mode at half strength.
     B = np.array([
         [1.0, 0.0],
         [0.0, 1.0],
@@ -231,9 +236,13 @@ def default_neural_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simu
     ])
 
     rng = np.random.default_rng(seed)
+    # Observation matrix: random projection from 4 latent states to obs_dim neurons.
     C = rng.standard_normal((obs_dim, 4))
+    # Small isotropic process noise — state dynamics dominate over noise.
     Q = 1e-3 * np.eye(4)
+    # Slightly larger observation noise — reflects realistic measurement uncertainty.
     R = 1e-2 * np.eye(obs_dim)
+    # Initial state: oscillatory mode mid-cycle, decay modes at non-zero values.
     x0 = np.array([1.0, 0.0, 0.5, -0.5])
 
     return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
