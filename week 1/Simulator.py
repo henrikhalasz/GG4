@@ -37,16 +37,6 @@ class Simulator:
         self.rng = np.random.default_rng(seed)
 
         self._validate_shapes()
-        self._validate_psd("Q", self.Q)
-        self._validate_psd("R", self.R)
-
-    @staticmethod
-    def _validate_psd(name: str, M: np.ndarray, tol: float = 1e-10) -> None:
-        if not np.allclose(M, M.T, atol=tol):
-            raise ValueError(f"{name} must be symmetric.")
-        min_eig = np.linalg.eigvalsh(M).min()
-        if min_eig < -tol:
-            raise ValueError(f"{name} must be positive semi-definite; minimum eigenvalue is {min_eig:.3e}.")
 
     def _validate_shapes(self) -> None:
         n, m, p = self.state_dim, self.input_dim, self.obs_dim
@@ -65,22 +55,6 @@ class Simulator:
     def reset_seed(self, seed: Optional[int] = None) -> None:
         """Reset the simulator random number generator."""
         self.rng = np.random.default_rng(seed)
-
-    def eigenvalues(self) -> np.ndarray:
-        """Return eigenvalues of the transition matrix A."""
-        return np.linalg.eigvals(self.A)
-
-    def is_stable(self) -> bool:
-        """Return True if A is stable (all eigenvalues strictly inside the unit circle)."""
-        return bool((np.abs(self.eigenvalues()) < 1).all())
-
-    def is_controllable(self) -> bool:
-        """Return True if the system (A, B) is fully controllable."""
-        return matrix_rank(controllability_matrix(self.A, self.B)) == self.state_dim
-
-    def is_observable(self) -> bool:
-        """Return True if the system (A, C) is fully observable."""
-        return matrix_rank(observability_matrix(self.A, self.C)) == self.state_dim
 
     def _make_input_sequence(self, T: int, U: InputSpec = None) -> np.ndarray:
         if U is None:
@@ -112,15 +86,8 @@ class Simulator:
         x_next = self.A @ x + self.B @ u + w
         return x_next, y, w, o
 
-    def simulate(self, T: int, U: InputSpec = None, x0=None, noise_free: bool = False) -> dict[str, np.ndarray]:
-        """Simulate one trajectory and return x, y, u, w, o arrays.
-
-        Args:
-            T: Number of timesteps.
-            U: Input sequence (array, callable, or None for zero input).
-            x0: Initial state override.
-            noise_free: If True, suppress all noise (w=0, o=0) for the ideal trajectory.
-        """
+    def simulate(self, T: int, U: InputSpec = None, x0=None) -> dict[str, np.ndarray]:
+        """Simulate one trajectory and return x, y, u, w, o arrays."""
         _check_positive_int("T", T)
 
         x_init = self.x0 if x0 is None else np.asarray(x0, dtype=float)
@@ -130,21 +97,17 @@ class Simulator:
         u = self._make_input_sequence(T, U)
         x = np.empty((T + 1, self.state_dim))
         y = np.empty((T, self.obs_dim))
-        w = np.zeros((T, self.state_dim))
-        o = np.zeros((T, self.obs_dim))
+        w = np.empty((T, self.state_dim))
+        o = np.empty((T, self.obs_dim))
 
         x[0] = x_init
         for t in range(T):
-            if noise_free:
-                y[t] = self.C @ x[t]
-                x[t + 1] = self.A @ x[t] + self.B @ u[t]
-            else:
-                x[t + 1], y[t], w[t], o[t] = self.step(x[t], u[t])
+            x[t + 1], y[t], w[t], o[t] = self.step(x[t], u[t])
 
         return {"x": x, "y": y, "u": u, "w": w, "o": o}
 
     def simulate_trials(self, trial_count: int, T: int, U: InputSpec = None, x0=None) -> dict[str, np.ndarray]:
-        """Simulate repeated trials. Arrays have shape (Trials, Timepoints, Dim)."""
+        """Simulate repeated trials. y has shape (Trials, Timepoints, Neurons)."""
         _check_positive_int("trial_count", trial_count)
         _check_positive_int("T", T)
 
@@ -153,8 +116,6 @@ class Simulator:
             "x": np.stack([r["x"] for r in results]),
             "y": np.stack([r["y"] for r in results]),
             "u": np.stack([r["u"] for r in results]),
-            "w": np.stack([r["w"] for r in results]),
-            "o": np.stack([r["o"] for r in results]),
         }
 
 
@@ -190,20 +151,6 @@ def pulse_input(T: int, input_dim: int, channel: int = 0, start: int = 10,
 
     u = zero_input(T, input_dim)
     u[start:min(T, start + duration), channel] = amplitude
-    return u
-
-
-def ramp_input(T: int, input_dim: int, channel: int = 0,
-               start: int = 0, amplitude: float = 1.0) -> np.ndarray:
-    """Linearly increasing input on one channel from `start` to T, scaled to `amplitude` at T-1."""
-    _check_positive_int("T", T)
-    _check_channel(channel, input_dim)
-    if not 0 <= start < T:
-        raise ValueError(f"start must be in [0, {T - 1}]; got {start}")
-
-    u = zero_input(T, input_dim)
-    duration = T - start
-    u[start:, channel] = amplitude * np.arange(duration) / max(duration - 1, 1)
     return u
 
 
