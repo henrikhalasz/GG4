@@ -246,3 +246,312 @@ def default_neural_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simu
     x0 = np.array([1.0, 0.0, 0.5, -0.5])
 
     return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
+
+
+def input_aligned_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simulator:
+    """Return a system where the first two observation rows directly track the input-driven dimensions.
+
+    Design motivation:
+        In the default system C is a random projection, so the relationship between
+        inputs and observations is diffuse and must be inferred from the data. Here
+        the first two rows of C are set to B.T, meaning two neurons measure exactly
+        the state dimensions that are driven most directly by the inputs (dimensions
+        0 and 1). The remaining obs_dim - 2 rows are drawn from a standard normal
+        distribution, exactly as in default_neural_system.
+
+        This "privileged observer" structure lets algorithms that can identify the
+        input-aligned rows bypass the state estimation problem almost entirely for
+        those two dimensions, making it a useful test of whether decoders exploit
+        structure or average it away.
+
+    Dynamics:
+        Because B.T selects the oscillatory latent dimensions, the two aligned
+        observation rows track the oscillation in x[0] and x[1] directly. The
+        random rows mix all four latent dimensions as in the default system,
+        producing a heterogeneous population. The contrast between informative
+        and noisy rows makes this a benchmark for feature-selection, attention,
+        or sparse regression methods.
+
+    Matrix shapes:
+        A  : (4, 4) — stable oscillator coupled to decay modes, identical to
+                       default_neural_system
+        B  : (4, 2) — input matrix, identical to default_neural_system
+        C  : (obs_dim, 4) — rows 0 and 1 are B.T (2, 4);
+                            rows 2 through obs_dim-1 are i.i.d. N(0, 1)
+        Q  : (4, 4) — 1e-3 * I, isotropic process noise
+        R  : (obs_dim, obs_dim) — 1e-2 * I, isotropic observation noise
+        x0 : (4,) — [1.0, 0.0, 0.5, -0.5]
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the random number generator used to draw the random rows of C
+        and for subsequent simulation noise.
+    obs_dim : int
+        Number of observed neurons. Must be at least 2 so that the two B.T rows
+        do not exhaust the observation space.
+
+    Returns
+    -------
+    Simulator
+    """
+    _check_positive_int("obs_dim", obs_dim)
+    if obs_dim < 2:
+        raise ValueError(f"obs_dim must be >= 2 for input_aligned_system; got {obs_dim}")
+
+    radius, period = 0.97, 20.0
+    theta = 2 * np.pi / period
+    c, s = np.cos(theta), np.sin(theta)
+
+    A = np.array([
+        [radius * c, -radius * s, 0.00, 0.00],
+        [radius * s,  radius * c, 0.00, 0.00],
+        [0.05,        0.00,       0.98, 0.00],
+        [0.00,        0.05,       0.00, 0.75],
+    ])
+    B = np.array([
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.5, 0.0],
+        [0.0, 0.5],
+    ])
+
+    rng = np.random.default_rng(seed)
+    C = rng.standard_normal((obs_dim, 4))
+    C[:2] = B.T
+
+    Q = 1e-3 * np.eye(4)
+    R = 1e-2 * np.eye(obs_dim)
+    x0 = np.array([1.0, 0.0, 0.5, -0.5])
+
+    return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
+
+
+def input_blind_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simulator:
+    """Return a system where no neuron can directly observe the input-driven dimensions.
+
+    Design motivation:
+        B drives the system through state dimensions 0 and 1 (the oscillatory pair).
+        Here C is drawn randomly and then columns 0 and 1 are set to zero, so that
+        y[t] = C @ x[t] + noise has no direct sensitivity to x[0] or x[1]. The
+        inputs' effect on y can only arrive indirectly through the coupling terms
+        in A: A[2, 0] and A[3, 1] (both 0.05) slowly leak oscillatory energy into
+        the decay modes x[2] and x[3], which do appear in y through the surviving
+        columns of C.
+
+        This creates a significantly harder estimation problem — decoding the input
+        from observations requires the algorithm to trace a two-step causal path
+        (input → oscillatory modes → decay modes → observations) that is attenuated
+        by both the small coupling coefficients and the decay dynamics.
+
+    Dynamics:
+        With C[:, 0] = C[:, 1] = 0, the observation is a linear function of x[2]
+        and x[3] only. Input-driven variance in x[0] and x[1] propagates into x[2]
+        and x[3] at rate 0.05 per time step, creating a delayed, blurred signature
+        of the input in y. This is analogous to a neural circuit where the readout
+        population is one synapse removed from the input-receiving population.
+
+    Matrix shapes:
+        A  : (4, 4) — identical to default_neural_system
+        B  : (4, 2) — identical to default_neural_system
+        C  : (obs_dim, 4) — i.i.d. N(0, 1) then columns 0 and 1 zeroed;
+                            effective sensitivity is only to x[2] and x[3]
+        Q  : (4, 4) — 1e-3 * I
+        R  : (obs_dim, obs_dim) — 1e-2 * I
+        x0 : (4,) — [1.0, 0.0, 0.5, -0.5]
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the random number generator used to draw C and for simulation noise.
+    obs_dim : int
+        Number of observed neurons; must be a positive integer.
+
+    Returns
+    -------
+    Simulator
+    """
+    _check_positive_int("obs_dim", obs_dim)
+
+    radius, period = 0.97, 20.0
+    theta = 2 * np.pi / period
+    c, s = np.cos(theta), np.sin(theta)
+
+    A = np.array([
+        [radius * c, -radius * s, 0.00, 0.00],
+        [radius * s,  radius * c, 0.00, 0.00],
+        [0.05,        0.00,       0.98, 0.00],
+        [0.00,        0.05,       0.00, 0.75],
+    ])
+    B = np.array([
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.5, 0.0],
+        [0.0, 0.5],
+    ])
+
+    rng = np.random.default_rng(seed)
+    C = rng.standard_normal((obs_dim, 4))
+    C[:, 0] = 0.0
+    C[:, 1] = 0.0
+
+    Q = 1e-3 * np.eye(4)
+    R = 1e-2 * np.eye(obs_dim)
+    x0 = np.array([1.0, 0.0, 0.5, -0.5])
+
+    return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
+
+
+def slow_drift_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simulator:
+    """Return a system with a near-random-walk slow drift mode that challenges state estimation.
+
+    Design motivation:
+        In default_neural_system, A[2, 2] = 0.98, giving the third state dimension
+        a time constant of roughly 50 time steps. Here A[2, 2] is raised to 0.999,
+        extending the time constant to approximately 1000 steps — approaching a
+        random walk. This slow drift creates a low-frequency component in both x
+        and y that wanders far from zero over long trials, making it difficult for
+        any filter or decoder to separate signal from slow noise.
+
+        Systems with near-unit-root dynamics are challenging because (a) the Kalman
+        gain for a slow mode is large, making the filter sensitive to observation
+        noise, and (b) the steady-state error covariance grows near-linearly in
+        time for a true random walk, degrading any fixed-gain approximation.
+
+    Dynamics:
+        The modified entry A[2, 2] = 0.999 means the third state dimension decays
+        by only 0.1% per step. Under the weak coupling from the oscillatory modes
+        (A[2, 0] = 0.05), x[2] accumulates a low-frequency drift that outlasts many
+        oscillation periods. All other dynamics — the oscillatory pair and the fast
+        decay x[3] — are identical to the default system. C is a random projection
+        as in default_neural_system, so the drift appears diffusely across all
+        observed neurons.
+
+    Matrix shapes:
+        A  : (4, 4) — as default_neural_system but A[2, 2] = 0.999 (was 0.98)
+        B  : (4, 2) — identical to default_neural_system
+        C  : (obs_dim, 4) — i.i.d. N(0, 1) random projection
+        Q  : (4, 4) — 1e-3 * I
+        R  : (obs_dim, obs_dim) — 1e-2 * I
+        x0 : (4,) — [1.0, 0.0, 0.5, -0.5]
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the random number generator used to draw C and for simulation noise.
+    obs_dim : int
+        Number of observed neurons; must be a positive integer.
+
+    Returns
+    -------
+    Simulator
+    """
+    _check_positive_int("obs_dim", obs_dim)
+
+    radius, period = 0.97, 20.0
+    theta = 2 * np.pi / period
+    c, s = np.cos(theta), np.sin(theta)
+
+    A = np.array([
+        [radius * c, -radius * s, 0.00,  0.00],
+        [radius * s,  radius * c, 0.00,  0.00],
+        [0.05,        0.00,       0.999, 0.00],
+        [0.00,        0.05,       0.00,  0.75],
+    ])
+    B = np.array([
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.5, 0.0],
+        [0.0, 0.5],
+    ])
+
+    rng = np.random.default_rng(seed)
+    C = rng.standard_normal((obs_dim, 4))
+    Q = 1e-3 * np.eye(4)
+    R = 1e-2 * np.eye(obs_dim)
+    x0 = np.array([1.0, 0.0, 0.5, -0.5])
+
+    return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
+
+
+def closed_loop_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simulator:
+    """Return a system combining input-aligned observations with an amplified input drive.
+
+    Design motivation:
+        This system simulates a closed-loop experimental setting where (a) the
+        readout of the system's state is directly aligned with the input dimensions,
+        as in input_aligned_system, and (b) the input effect on the state is
+        amplified by a factor of 2.0 compared with the default system. The
+        combination means that input perturbations create larger excursions in the
+        latent state and are immediately visible in the first two rows of y,
+        approximating a scenario where a brain-computer interface both reads out and
+        drives a neural population with high efficiency.
+
+        The amplified B makes the system more reactive to stimulation, which is
+        interesting for studying how filters handle large, sudden state changes and
+        whether estimation quality degrades when the signal-to-noise ratio of the
+        input-evoked response is high relative to the background dynamics.
+
+    Dynamics:
+        B_scaled = 2 * B drives both oscillatory dimensions at twice the default
+        strength. The first two rows of C are set to B.T (the unscaled version),
+        placing the aligned readout in the original B column space; the remaining
+        obs_dim - 2 rows are random. Because B_scaled doubles the state excursions,
+        the SNR of the input-evoked response in y is roughly 4x higher than in the
+        default system (variance scales as amplitude squared), while observation
+        noise R is unchanged — making this a high-SNR, easy-to-decode regime that
+        nonetheless stresses filters designed around smaller perturbations.
+
+    Matrix shapes:
+        A       : (4, 4) — identical to default_neural_system
+        B_scaled: (4, 2) — 2.0 * B from default_neural_system; stored as sim.B
+        C       : (obs_dim, 4) — rows 0 and 1 are B.T of the unscaled B (2, 4);
+                                 rows 2 through obs_dim-1 are i.i.d. N(0, 1)
+        Q       : (4, 4) — 1e-3 * I
+        R       : (obs_dim, obs_dim) — 1e-2 * I
+        x0      : (4,) — [1.0, 0.0, 0.5, -0.5]
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the random number generator used to draw the random rows of C
+        and for simulation noise.
+    obs_dim : int
+        Number of observed neurons. Must be at least 2 so that the two B.T rows
+        can be placed.
+
+    Returns
+    -------
+    Simulator
+    """
+    _check_positive_int("obs_dim", obs_dim)
+    if obs_dim < 2:
+        raise ValueError(f"obs_dim must be >= 2 for closed_loop_system; got {obs_dim}")
+
+    radius, period = 0.97, 20.0
+    theta = 2 * np.pi / period
+    c, s = np.cos(theta), np.sin(theta)
+
+    A = np.array([
+        [radius * c, -radius * s, 0.00, 0.00],
+        [radius * s,  radius * c, 0.00, 0.00],
+        [0.05,        0.00,       0.98, 0.00],
+        [0.00,        0.05,       0.00, 0.75],
+    ])
+    B = np.array([
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.5, 0.0],
+        [0.0, 0.5],
+    ])
+    B_scaled = 2.0 * B
+
+    rng = np.random.default_rng(seed)
+    C = rng.standard_normal((obs_dim, 4))
+    C[:2] = B.T
+
+    Q = 1e-3 * np.eye(4)
+    R = 1e-2 * np.eye(obs_dim)
+    x0 = np.array([1.0, 0.0, 0.5, -0.5])
+
+    return Simulator(A, B_scaled, C, Q, R, x0=x0, seed=seed)
