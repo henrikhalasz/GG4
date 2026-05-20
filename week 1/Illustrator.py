@@ -33,6 +33,11 @@ class Illustrator:
     # caller can override via show_trials.
     MAX_TRIALS_OVERLAY = 10
 
+    # beyond this many neurons, the SNR bar chart auto-selects
+    # the top and bottom MAX_SNR_BAR_EACH neurons to stay readable.
+    MAX_SNR_BAR_EACH = 5
+    MAX_SNR_BAR_NEURONS = 20
+
     def __init__(self, observation: np.ndarray):
         """
         Initialise from a 3D array of shape (Trials, Timepoints, Neurons).
@@ -90,26 +95,32 @@ class Illustrator:
         """
         Plot neural activity over time, one subplot per neuron.
 
-        For each selected neuron, individual trials are drawn as thin
-        semi-transparent lines; the trial-averaged mean is a bold line;
-        a shaded band shows ±1 standard deviation across trials.
+        Each panel shows the time course of one neuron. Individual trials
+        are drawn as thin semi-transparent lines; the trial-averaged mean
+        is a bold line; a shaded band spans +/-1 standard deviation across
+        trials. Panels are arranged in a grid (at most 4 columns wide).
 
         Parameters
         ----------
         neuron_indices : array-like of int, optional
-            Which neurons to plot. Defaults to all neurons.
+            Indices of the neurons to plot. Negative indices are supported.
+            Defaults to all neurons. Duplicates are silently dropped.
         trial_indices : array-like of int, optional
-            Which trials to include. The mean and band are computed over
-            this subset only. Defaults to all trials.
+            Indices of the trials to include. The per-trial lines, the
+            mean, and the +/-1 SD band are all computed from this subset
+            only. Defaults to all trials.
         show_trials : bool, optional
             Whether to draw the thin per-trial lines. If None (default),
-            they are shown when n_trials_plot <= MAX_TRIALS_OVERLAY and
-            hidden otherwise to avoid spaghetti.
+            lines are shown when the number of selected trials is at most
+            ``MAX_TRIALS_OVERLAY`` (currently 10) and hidden otherwise,
+            to avoid an unreadable spaghetti plot.
         show_mean : bool, default True
-            Whether to overlay the trial-mean as a bold line.
+            Whether to overlay the trial-averaged mean as a bold line.
         show_band : bool, default True
-            Whether to shade ±1 SD across trials. Automatically suppressed
-            when fewer than 2 trials are selected.
+            Whether to shade the +/-1 SD region around the mean. The band
+            is automatically suppressed when fewer than 2 trials are
+            selected, because a standard deviation requires at least 2
+            observations.
         n_cols : int, optional
             Number of columns in the subplot grid. Defaults to an
             approximately-square layout, capped at 4 columns.
@@ -120,12 +131,36 @@ class Illustrator:
 
         Returns
         -------
-        plt.Figure
-        The figure, so the caller can save or further customise it.
+        fig : plt.Figure
+            The figure containing all neuron subplots. Pass to
+            ``fig.savefig(path)`` to save, or ``plt.show()`` to display.
+
+        Raises
+        ------
+        ValueError
+            If ``neuron_indices`` or ``trial_indices`` is empty, not 1-D,
+            or contains indices outside ``[-n, n-1]`` for the relevant
+            axis size ``n``.
 
         Notes
         -----
-        Uses sample standard deviation (ddof=1) for the band - unbiased estimator
+        The +/-1 SD band captures trial-to-trial variability at each
+        timestep, not measurement noise. A wide band means the neuron's
+        response changes substantially from trial to trial. For a
+        quantitative reliability score that separates signal variance from
+        noise variance, see ``compute_snr``.
+
+        The band uses sample standard deviation (ddof=1).
+
+        Examples
+        --------
+        >>> ill = Illustrator(data)          # data shape: (trials, timesteps, neurons)
+        >>> fig = ill.plot_timeseries()      # all neurons, all trials
+        >>> fig = ill.plot_timeseries(       # two neurons, first 5 trials only
+        ...     neuron_indices=[0, 2],
+        ...     trial_indices=range(5),
+        ... )
+        >>> fig.savefig("timeseries.png", dpi=150)
         """
         # resolve and validate neuron/trial selections
         neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
@@ -216,26 +251,38 @@ class Illustrator:
         self,
         trial_index: int | None = None,
         neuron_indices: ArrayLike | None = None,
+        cosine_sort: bool = False,
         zscore: bool = False,
         title: str | None = None,
     ) -> plt.Figure:
         """
         Show population activity as a (Neurons x Time) heatmap.
 
+        Each row is one neuron; each column is one timestep; colour
+        encodes activity. By default the trial-averaged signal is
+        displayed. Pass ``trial_index`` to inspect a single trial instead.
+
         Parameters
         ----------
         trial_index : int, optional
-            Which trial to display. If None (default), the trial-averaged
-            signal is shown.
+            Index of the trial to display. Negative indices are supported.
+            If None (default), the trial-averaged signal is shown.
         neuron_indices : array-like of int, optional
-            Which neurons to include. Defaults to all neurons. Pass the
-            output of ``np.where(snr > threshold)[0]`` from
-            ``compute_snr`` to restrict to reliable neurons.
+            Indices of the neurons to include. Defaults to all neurons.
+            Pass the output of ``np.where(snr > threshold)[0]`` from
+            ``compute_snr`` to restrict to reliable neurons before
+            inspecting the population structure.
+        cosine_sort : bool, default False
+            If True, reorder rows so that neurons with similar temporal
+            patterns are grouped together. The neuron whose time course
+            is most similar on average to all others is used as the
+            reference, and remaining neurons are sorted by cosine
+            similarity to it (descending).
         zscore : bool, default False
             If True, z-score each row independently across time and use a
             diverging colormap centred at 0. Useful when neurons differ
             widely in absolute scale and you want to compare temporal
-            dynamics.
+            dynamics rather than raw activity levels.
         title : str, optional
             Override or suppress the automatic title. Pass a string to
             use a custom title, or ``""`` to remove it. Defaults to an
@@ -243,12 +290,45 @@ class Illustrator:
 
         Returns
         -------
-        plt.Figure
+        fig : plt.Figure
+            The figure containing the heatmap. Pass to
+            ``fig.savefig(path)`` to save, or ``plt.show()`` to display.
+
+        Raises
+        ------
+        ValueError
+            If ``neuron_indices`` is empty, not 1-D, or contains indices
+            outside ``[-n, n-1]`` for the neuron axis size ``n``.
+            If ``trial_index`` is outside ``[-R, R-1]`` for the trial
+            count ``R``.
+
+        Examples
+        --------
+        >>> ill = Illustrator(data)          # data shape: (trials, timesteps, neurons)
+        >>> fig = ill.plot_heatmap()         # trial-averaged, all neurons
+        >>> fig = ill.plot_heatmap(trial_index=0, zscore=True)
+        >>> fig = ill.plot_heatmap(neuron_indices=np.where(snr > 0.5)[0],
+        ...                        cosine_sort=True)
         """
         # --- 1. Select the (N, T) matrix to display -----------------------
         neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
         data, source = self._select_display_data(trial_index)
         data = data[:, neuron_idx].T  # (N_sel, T)
+
+        # optional cosine similarity sort
+        if cosine_sort:
+            norms = np.linalg.norm(data, axis=1, keepdims=True)
+            normalised_data = data / np.where(norms == 0, 1.0, norms)
+            # find the index of the neuron most similar on average to the others
+            similarities = normalised_data @ normalised_data.T  # (N_sel, N_sel)
+            avg_sim = similarities.mean(axis=1)
+            most_similar_index = np.argmax(avg_sim)
+
+            # sort by cosine similarity to the most similar neuron
+            sort_order = np.argsort(similarities[most_similar_index])[::-1]
+            data = data[sort_order]
+            neuron_idx = neuron_idx[sort_order]
+          
 
         # --- 2. Optional per-neuron z-scoring across time -----------------
         if zscore:
@@ -309,31 +389,42 @@ class Illustrator:
         """
         Plot the temporal autocorrelation function (ACF) per neuron.
 
-        For each neuron `n` the ACF at lag τ is
-
-            ACF_n(τ) = E_{r,t}[ (y^(r)_{n,t} − μ_n)(y^(r)_{n,t+τ} − μ_n) ]
-                       / Var(y_n)
-
-        where μ_n and Var(y_n) are pooled across every (trial, timestep)
-        pair. The lag-τ expectation is taken over all (r, t) for which
-        both endpoints lie inside the trial window. The estimator is
-        biased (1/N normalisation, not 1/(N−1)) — this is the standard
-        choice for ACFs and guarantees ACF_n(0) = 1.
+        For each neuron the ACF measures how similar its activity is to
+        itself at different time offsets (lags). At lag 0 the value is
+        always 1 by definition. The ACF is estimated by pooling all selected 
+        trials and timesteps, so including more trials gives a more reliable 
+        curve. Neurons with no trial-to-trial variation are shown as NaN.
 
         Parameters
         ----------
         max_lag : int, optional
-            Largest lag to compute. Defaults to T // 4 (15 for T=60),
-            a conventional choice that captures decay without leaning
-            on the lag-T-1 tail, where only a handful of samples survive
-            and estimates get noisy. Must satisfy 1 <= max_lag < T.
+            Largest time offset (in timesteps) to compute. Defaults to
+            ``T // 4``, a conventional choice that captures the main
+            decay while avoiding the long tail where very few sample
+            pairs survive and estimates become unreliable. Must satisfy
+            ``1 <= max_lag < T``. Values above ``T // 4`` are accepted
+            but trigger a ``UserWarning``.
         neuron_indices : array-like of int, optional
-            Which neurons to include. Defaults to all neurons.
+            Indices of the neurons to include. Negative indices are
+            supported. Defaults to all neurons. Duplicates are silently
+            dropped.
         trial_indices : array-like of int, optional
-            Which trials to pool over for the ACF estimate. Defaults to
-            all trials.
+            Indices of the trials to pool over when estimating the ACF.
+            Defaults to all trials. Including more trials reduces
+            estimation noise.
         mode : {"overlay", "subplots", "heatmap"}, default "overlay"
-            How to display the (max_lag+1, n_neurons) ACF array.
+            How to display the results.
+
+            - ``"overlay"``: all neurons on a single axes, each drawn
+              in a distinct colour with a legend. Best for comparing a
+              small number of neurons directly.
+            - ``"subplots"``: one panel per neuron arranged in a grid,
+              matching the layout of ``plot_timeseries``. Best when
+              individual detail matters more than cross-neuron
+              comparison.
+            - ``"heatmap"``: a colour image with lag on the x-axis and
+              neuron on the y-axis, using a diverging colourmap centred
+              at zero. Best for a population-level overview.
         title : str, optional
             Override or suppress the automatic title. Pass a string to
             use a custom title, or ``""`` to remove it. Defaults to an
@@ -341,7 +432,29 @@ class Illustrator:
 
         Returns
         -------
-        plt.Figure
+        fig : plt.Figure
+            The figure containing the ACF plot. Pass to
+            ``fig.savefig(path)`` to save, or ``plt.show()`` to display.
+
+        Raises
+        ------
+        ValueError
+            If ``neuron_indices`` or ``trial_indices`` is empty, not
+            1-D, or contains indices outside ``[-n, n-1]`` for the
+            relevant axis size ``n``.
+            If ``max_lag`` is outside ``[1, T-1]``.
+            If ``mode`` is not one of ``"overlay"``, ``"subplots"``, or
+            ``"heatmap"``.
+
+        Examples
+        --------
+        >>> ill = Illustrator(data)          # data shape: (trials, timesteps, neurons)
+        >>> fig = ill.plot_autocorrelation()                     # all neurons, overlay
+        >>> fig = ill.plot_autocorrelation(mode="subplots",      # per-neuron panels
+        ...                                neuron_indices=[0, 2])
+        >>> fig = ill.plot_autocorrelation(mode="heatmap",       # population overview
+        ...                                max_lag=20)
+        >>> fig.savefig("acf.png", dpi=150)
         """
         # --- 1. Resolve and validate neuron / trial selection -------------
         neuron_idx = self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
@@ -459,43 +572,64 @@ class Illustrator:
             fig.tight_layout()
         return fig
 
-    def compute_snr(self, plot: bool = False) -> tuple[np.ndarray, plt.Figure | None]:
+    def compute_snr(self, plot: bool = False, neuron_indices: ArrayLike | None = None) -> tuple[np.ndarray, plt.Figure | None]:
         """
-        Computes the bias-corrected signal-to-noise ratio (SNR) for each neuron.
+        Compute a per-neuron signal-to-noise ratio (SNR) reliability score.
 
-        This method implements the Sahani-Linden (2003) signal power estimator.
-        It decomposes a neuron's total variability into a deterministic response 
-        ("signal") and trial-to-trial fluctuations ("noise"). Because the temporal 
-        variance of the trial mean is artificially inflated by noise, this method 
-        subtracts the expected noise contamination to return an unbiased estimate 
-        of the true signal variance.
+        The estimator is bias-corrected so that a pure-noise neuron scores
+        around 0 rather than a spurious positive value. Optionally
+        returns a two-panel diagnostic figure: a bar chart of
+        reliability per neuron alongside the trial-averaged time
+        courses of the most and least reliable neurons.
 
         Parameters
         ----------
         plot : bool, default False
-            If True, generates and returns a diagnostic plot of the SNR values.
+            If True, also build and return a diagnostic figure (see
+            Returns). If False, only the SNR array is computed.
+        neuron_indices : array-like of int, optional
+            Restrict the diagnostic bar chart to these neurons.
+            Negative indices are supported. Has no effect on the
+            returned SNR array, which always covers every neuron, and
+            is ignored when ``plot=False``. If left as None and the
+            dataset contains more than 20 neurons, the bar chart
+            auto-selects the top 5 and bottom 5 neurons by reliability
+            to stay readable.
 
         Returns
         -------
         snr : np.ndarray
-            A 1D array of shape (N,) containing the estimated SNR per neuron, 
-            ordered identically to the input data. 
-            
-            - Values are clipped to a minimum of 0.0. (Because the bias correction 
-              subtracts two random variables, true zero-signal neurons can yield 
-              meaningless negative variances due to finite sampling).
-            - Neurons with exactly zero trial-to-trial noise yield a division 
-              by zero and are returned as `np.nan` (technically infinite SNR, 
-              meaning the response is perfectly reproducible).
-              
+            A 1D array of shape (N,) with one SNR value per neuron, in
+            the original neuron order. Values are clipped at 0 from
+            below — a true zero-signal neuron may otherwise yield a
+            small negative estimate due to finite sampling. Neurons
+            with no trial-to-trial variability at all are returned as
+            ``np.nan``: their response is perfectly reproducible and
+            the SNR is effectively infinite.
         fig : plt.Figure or None
-            The diagnostic figure if `plot=True`, otherwise None.
+            The diagnostic figure if ``plot=True``, otherwise None.
+            Pass to ``fig.savefig(path)`` to save, or ``plt.show()`` to
+            display. In the bar chart, neurons with ``np.nan`` SNR are
+            drawn at height 1 with a hatched pattern.
 
         Raises
         ------
         ValueError
-            If the dataset contains fewer than 2 trials. Inter-trial noise 
-            variance cannot be calculated from a single trial.
+            If the dataset contains fewer than 2 trials, since
+            trial-to-trial noise cannot be estimated from a single
+            trial.
+            If ``neuron_indices`` is empty, not 1-D, or contains
+            indices outside ``[-N, N-1]`` for the neuron axis size
+            ``N``.
+
+        Examples
+        --------
+        >>> ill = Illustrator(data)          # data shape: (trials, timesteps, neurons)
+        >>> snr, _ = ill.compute_snr()       # SNR per neuron, no figure
+        >>> snr, fig = ill.compute_snr(plot=True)
+        >>> fig.savefig("snr.png", dpi=150)
+        >>> reliable = np.where(snr > 0.5)[0]                 # filter to reliable neurons
+        >>> fig = ill.plot_heatmap(neuron_indices=reliable)   # follow-up inspection
         """
         if self.trial_cnt < 2:
             raise ValueError(
@@ -535,10 +669,17 @@ class Illustrator:
         snr = np.clip(snr, a_min=0.0, a_max=None)
         snr[zero_noise] = np.nan
 
-        fig = self._plot_snr(snr) if plot else None
+        if plot:
+            bar_idx = (
+                self._resolve_indices(neuron_indices, self.neuron_cnt, "neuron_indices")
+                if neuron_indices is not None else None
+            )
+            fig = self._plot_snr(snr, bar_indices=bar_idx)
+        else:
+            fig = None
         return snr, fig
 
-    def _plot_snr(self, snr: np.ndarray) -> plt.Figure:
+    def _plot_snr(self, snr: np.ndarray, bar_indices: np.ndarray | None = None) -> plt.Figure:
         """Render the two-panel SNR diagnostic for `compute_snr`."""
         N = self.neuron_cnt
         R = self.trial_cnt
@@ -551,43 +692,61 @@ class Illustrator:
         # Sort descending by r²_e. NaN ("∞ SNR") sorts to the top.
         sort_key = np.where(np.isnan(r2e), np.inf, r2e)
         order = np.argsort(-sort_key)
-        r2e_sorted = r2e[order]
-        is_nan = np.isnan(r2e_sorted)
+
+        # Determine which neurons appear in the bar chart.
+        # Priority: explicit selection → auto top/bottom → all.
+        if bar_indices is not None:
+            bar_set = set(bar_indices.tolist())
+            show_order = np.array([n for n in order if n in bar_set])
+            bar_title_suffix = ""
+        elif N > self.MAX_SNR_BAR_NEURONS:
+            k = self.MAX_SNR_BAR_EACH
+            show_order = np.concatenate([order[:k], order[-k:]])
+            bar_title_suffix = f"  (top {k} / bottom {k} shown)"
+        else:
+            show_order = order
+            bar_title_suffix = ""
+
+        r2e_show  = r2e[show_order]
+        is_nan_show = np.isnan(r2e_show)
+        n_bars = len(show_order)
 
         fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13.5, 4.5))
 
         # --- Left: bar chart of r²_e --------------------------------
-        bar_colors = [self._neuron_color(n) for n in order]
-        # Draw NaN bars at full height with a hatched pattern, so the
-        # neuron is visible rather than a blank slot.
-        bar_heights = np.where(is_nan, 1.0, r2e_sorted)
+        bar_colors = [self._neuron_color(n) for n in show_order]
+        bar_heights = np.where(is_nan_show, 1.0, r2e_show)
         bars = ax_l.bar(
-            np.arange(N), bar_heights,
+            np.arange(n_bars), bar_heights,
             color=bar_colors, edgecolor="0.25", linewidth=0.6,
         )
-        for i, nan in enumerate(is_nan):
+        for i, nan in enumerate(is_nan_show):
             if nan:
                 bars[i].set_hatch("///")
                 ax_l.text(
                     i, 1.02, "∞ SNR",
                     ha="center", va="bottom", fontsize=7, rotation=90,
                 )
+        # Visual separator between the top and bottom groups when auto-selected.
+        if bar_title_suffix:
+            k = self.MAX_SNR_BAR_EACH
+            ax_l.axvline(k - 0.5, color="0.5", linewidth=0.8, linestyle=":")
         ax_l.axhline(
             0.5, color="k", linewidth=0.8, linestyle="--",
             label="signal = noise",
         )
-        ax_l.set_xticks(np.arange(N))
-        ax_l.set_xticklabels([str(n) for n in order], fontsize=8)
-        ax_l.set_xlabel("neuron index (sorted)")
+        ax_l.set_xticks(np.arange(n_bars))
+        ax_l.set_xticklabels([str(n) for n in show_order], fontsize=8)
+        ax_l.set_xlabel("neuron index (sorted by reliability)")
         ax_l.set_ylabel(r"explainable variance $r^2_e$")
         ax_l.set_ylim(0, 1.12)
-        ax_l.set_title(f"Signal reliability per neuron (R={R} trials)")
+        ax_l.set_title(f"Signal reliability per neuron (R={R} trials){bar_title_suffix}")
         ax_l.legend(loc="upper right", fontsize=8, frameon=False)
 
         # --- Right: trial mean ± 1 SD for top / bottom neurons ------
         # Only finite-r²_e neurons rank meaningfully; NaN neurons are
         # "off the scale" reliable and would dominate the comparison.
-        finite_order = order[~is_nan]
+        finite_order = order[~np.isnan(r2e[order])]
         if len(finite_order) < 4:
             chosen = list(finite_order)
         else:
@@ -623,30 +782,29 @@ class Illustrator:
         title: str | None = None,
     ) -> tuple[plt.Figure, np.ndarray]:
         """
-        Pairwise Pearson-correlation heatmap of the neural population.
+        Show pairwise Pearson correlations as a (Neurons x Neurons) heatmap.
 
-        For each pair of neurons (i, j) the entry is the Pearson
-        correlation between their time series across the T timesteps.
-        By default the time series is the trial average; pass
-        `trial_index` to use a single trial instead. Block structure
-        in the displayed matrix is direct evidence of shared
-        low-dimensional latent drive.
+        Each cell (i, j) is the correlation between two neurons' time
+        courses across timesteps. By default the trial-averaged signal
+        is used; pass ``trial_index`` to use a single trial instead.
+        Block structure along the diagonal flags groups of neurons that
+        co-vary over time.
 
         Parameters
         ----------
         trial_index : int, optional
-            Single trial to use. Defaults to the trial-averaged signal.
+            Index of the trial to use. Negative indices are supported.
+            If None (default), the trial-averaged signal is used.
         neuron_indices : array-like of int, optional
-            Which neurons to include. Defaults to all neurons. Pass the
-            output of ``np.where(snr > threshold)[0]`` from
+            Indices of the neurons to include. Defaults to all neurons.
+            Pass the output of ``np.where(snr > threshold)[0]`` from
             ``compute_snr`` to restrict to reliable neurons before
-            computing the correlation structure.
+            inspecting the correlation structure.
         cluster : bool, default True
-            If True, reorder rows/columns using average-linkage
-            hierarchical clustering on (1 - C) so co-correlated neurons
-            sit next to each other in the display. The returned matrix
-            is always in *original* neuron order; only the display
-            changes.
+            If True, reorder rows/columns by average-linkage
+            hierarchical clustering so co-varying neurons sit next to
+            each other. Only the display order changes; the returned
+            matrix is always in the original neuron order.
         title : str, optional
             Override or suppress the automatic title. Pass a string to
             use a custom title, or ``""`` to remove it. Defaults to an
@@ -654,35 +812,36 @@ class Illustrator:
 
         Returns
         -------
-        (C, fig) : (np.ndarray of shape (N_sel, N_sel), plt.Figure)
-            `C[i, j]` is the Pearson correlation between selected neuron i
-            and selected neuron j, in the order given by `neuron_indices`.
-            Rows/columns for constant-in-time neurons are NaN.
+        C : np.ndarray
+            A (N_sel, N_sel) matrix of Pearson correlations between the
+            selected neurons, in the order given by ``neuron_indices``.
+            Rows and columns for neurons whose activity is constant in
+            time are NaN (correlation undefined).
+        fig : plt.Figure
+            The figure containing the correlation heatmap. Pass to
+            ``fig.savefig(path)`` to save, or ``plt.show()`` to display.
+            Constant-in-time neurons appear as gray rows/columns and
+            are listed in a caption below the figure.
 
         Raises
         ------
         ValueError
-            If fewer than 2 neurons are selected, or if `trial_index` is
-            out of range.
+            If fewer than 2 neurons are selected, since a 1x1
+            correlation matrix carries no information.
+            If ``neuron_indices`` is empty, not 1-D, or contains
+            indices outside ``[-N, N-1]`` for the neuron axis size
+            ``N``.
+            If ``trial_index`` is outside ``[-R, R-1]`` for the trial
+            count ``R``.
 
-        Notes
-        -----
-        Correlations are computed on the trial-averaged signal by
-        default. The result therefore reflects shared *deterministic*
-        structure — what the neurons do together reliably across
-        trials. Trial-to-trial noise, which `compute_snr` measures, is
-        averaged out before this method sees the data.
-
-        Correlation measures linear co-movement. Two neurons driven by
-        the same latent dimension of x_t will appear strongly
-        correlated. A neuron uncorrelated with everything is either
-        noise-dominated (consistent with a low SNR from `compute_snr`)
-        or driven by a latent dimension that no other recorded neuron
-        observes.
-
-        Correlation does not imply a direct connection between neurons.
-        It reflects shared input from the hidden state x_t through the
-        observation matrix C, not a direct neuron-to-neuron coupling.
+        Examples
+        --------
+        >>> ill = Illustrator(data)          # data shape: (trials, timesteps, neurons)
+        >>> C, fig = ill.plot_correlation_matrix()                   # all neurons, clustered
+        >>> C, fig = ill.plot_correlation_matrix(trial_index=0,      # single-trial, no clustering
+        ...                                      cluster=False)
+        >>> reliable = np.where(snr > 0.5)[0]
+        >>> C, fig = ill.plot_correlation_matrix(neuron_indices=reliable)
         """
         neuron_idx = self._resolve_indices(
             neuron_indices, self.neuron_cnt, "neuron_indices"
