@@ -85,6 +85,7 @@ class Illustrator:
         show_mean: bool = True,
         show_band: bool = True,
         n_cols: int | None = None,
+        title: str | None = None,
     ) -> plt.Figure:
         """
         Plot neural activity over time, one subplot per neuron.
@@ -112,6 +113,10 @@ class Illustrator:
         n_cols : int, optional
             Number of columns in the subplot grid. Defaults to an
             approximately-square layout, capped at 4 columns.
+        title : str, optional
+            Override or suppress the automatic figure title. Pass a
+            string to use a custom title, or ``""`` to remove the title
+            entirely. The default (``None``) uses an auto-generated title.
 
         Returns
         -------
@@ -190,16 +195,21 @@ class Illustrator:
 
 
         ##review##
-        title = (f"Time series  "
-                 f"({n_trials_plot} trial{'s' if n_trials_plot != 1 else ''}, "
-                 f"{n_neurons_plot} neuron{'s' if n_neurons_plot != 1 else ''})")
+        _auto_title = (f"Time series  "
+                       f"({n_trials_plot} trial{'s' if n_trials_plot != 1 else ''}, "
+                       f"{n_neurons_plot} neuron{'s' if n_neurons_plot != 1 else ''})")
         if n_trials_plot == 1 and not show_band:
-            title += "  [band suppressed: single trial]"
+            _auto_title += "  [band suppressed: single trial]"
         elif not show_trials and n_trials_plot > self.MAX_TRIALS_OVERLAY:
-            title += f"  [per-trial lines hidden: >{self.MAX_TRIALS_OVERLAY} trials]"
-        fig.suptitle(title, fontsize=11)
+            _auto_title += f"  [per-trial lines hidden: >{self.MAX_TRIALS_OVERLAY} trials]"
+        _show_title = _auto_title if title is None else title
+        if _show_title:
+            fig.suptitle(_show_title, fontsize=11)
 
-        fig.tight_layout()
+        if _show_title:
+            fig.tight_layout(rect=[0, 0, 1, 0.96])
+        else:
+            fig.tight_layout()
         return fig
 
     def plot_heatmap(
@@ -207,6 +217,7 @@ class Illustrator:
         trial_index: int | None = None,
         neuron_indices: ArrayLike | None = None,
         zscore: bool = False,
+        title: str | None = None,
     ) -> plt.Figure:
         """
         Show population activity as a (Neurons x Time) heatmap.
@@ -225,6 +236,10 @@ class Illustrator:
             diverging colormap centred at 0. Useful when neurons differ
             widely in absolute scale and you want to compare temporal
             dynamics.
+        title : str, optional
+            Override or suppress the automatic title. Pass a string to
+            use a custom title, or ``""`` to remove it. Defaults to an
+            auto-generated title.
 
         Returns
         -------
@@ -267,15 +282,20 @@ class Illustrator:
         ax.set_ylabel("neuron")
         ax.set_yticks(np.arange(n_sel))
         ax.set_yticklabels([str(n) for n in neuron_idx])
-        title = f"Population activity - {source}"
+        _auto_title = f"Population activity - {source}"
         if zscore:
-            title += " (z-scored per neuron)"
-        ax.set_title(title)
+            _auto_title += " (z-scored per neuron)"
+        _show_title = _auto_title if title is None else title
+        if _show_title:
+            fig.suptitle(_show_title, fontsize=11)
 
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label(cbar_label)
 
-        fig.tight_layout()
+        if _show_title:
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+        else:
+            fig.tight_layout()
         return fig
 
     def plot_autocorrelation(
@@ -284,6 +304,7 @@ class Illustrator:
         neuron_indices: ArrayLike | None = None,
         trial_indices: ArrayLike | None = None,
         mode: str = "overlay",
+        title: str | None = None,
     ) -> plt.Figure:
         """
         Plot the temporal autocorrelation function (ACF) per neuron.
@@ -313,6 +334,10 @@ class Illustrator:
             all trials.
         mode : {"overlay", "subplots", "heatmap"}, default "overlay"
             How to display the (max_lag+1, n_neurons) ACF array.
+        title : str, optional
+            Override or suppress the automatic title. Pass a string to
+            use a custom title, or ``""`` to remove it. Defaults to an
+            auto-generated title.
 
         Returns
         -------
@@ -373,10 +398,11 @@ class Illustrator:
             ax.axhline(0.0, color="k", linewidth=0.6, linestyle="--")
             ax.set_xlabel("lag τ (timesteps)")
             ax.set_ylabel("autocorrelation")
-            ax.set_title(
-                f"Autocorrelation per neuron  "
-                f"(R={len(trial_idx)}, T={T}, lags 0..{max_lag})"
-            )
+            _auto_title = (f"Autocorrelation per neuron  "
+                           f"(R={len(trial_idx)}, T={T}, lags 0..{max_lag})")
+            _show_title = _auto_title if title is None else title
+            if _show_title:
+                fig.suptitle(_show_title, fontsize=11)
             ax.legend(
                 ncol=max(1, n_sel // 8 + 1),
                 fontsize=8, loc="best", frameon=False,
@@ -396,11 +422,11 @@ class Illustrator:
             self._blank_unused(axes, n_sel)
             self._label_left_column(axes, "ACF")
             self._label_bottom_row(axes, "lag τ")
-            fig.suptitle(
-                f"Autocorrelation per neuron  "
-                f"(R={len(trial_idx)}, T={T}, lags 0..{max_lag})",
-                fontsize=11,
-            )
+            _auto_title = (f"Autocorrelation per neuron  "
+                           f"(R={len(trial_idx)}, T={T}, lags 0..{max_lag})")
+            _show_title = _auto_title if title is None else title
+            if _show_title:
+                fig.suptitle(_show_title, fontsize=11)
 
         else:  # mode == "heatmap"
             fig, ax = plt.subplots(figsize=(8, 0.3 * n_sel + 1.5))
@@ -419,14 +445,18 @@ class Illustrator:
             ax.set_ylabel("neuron")
             ax.set_yticks(np.arange(n_sel))
             ax.set_yticklabels([str(n) for n in neuron_idx])
-            ax.set_title(
-                f"Autocorrelation heatmap  "
-                f"(R={len(trial_idx)}, T={T}, lags 0..{max_lag})"
-            )
+            _auto_title = (f"Autocorrelation heatmap  "
+                           f"(R={len(trial_idx)}, T={T}, lags 0..{max_lag})")
+            _show_title = _auto_title if title is None else title
+            if _show_title:
+                fig.suptitle(_show_title, fontsize=11)
             cbar = fig.colorbar(im, ax=ax)
             cbar.set_label("autocorrelation")
 
-        fig.tight_layout()
+        if _show_title:
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+        else:
+            fig.tight_layout()
         return fig
 
     def compute_snr(self, plot: bool = False) -> tuple[np.ndarray, plt.Figure | None]:
@@ -589,6 +619,7 @@ class Illustrator:
         trial_index: int | None = None,
         neuron_indices: ArrayLike | None = None,
         cluster: bool = True,
+        title: str | None = None,
     ) -> tuple[plt.Figure, np.ndarray]:
         """
         Pairwise Pearson-correlation heatmap of the neural population.
@@ -615,6 +646,10 @@ class Illustrator:
             sit next to each other in the display. The returned matrix
             is always in *original* neuron order; only the display
             changes.
+        title : str, optional
+            Override or suppress the automatic title. Pass a string to
+            use a custom title, or ``""`` to remove it. Defaults to an
+            auto-generated title.
 
         Returns
         -------
@@ -695,10 +730,12 @@ class Illustrator:
         ax.set_xlabel("neuron")
         ax.set_ylabel("neuron")
 
-        title = f"Correlation matrix - {source}"
+        _auto_title = f"Correlation matrix - {source}"
         if do_cluster:
-            title += " (clustered)"
-        ax.set_title(title)
+            _auto_title += " (clustered)"
+        _show_title = _auto_title if title is None else title
+        if _show_title:
+            fig.suptitle(_show_title, fontsize=11)
 
         cbar = fig.colorbar(im, ax=ax, fraction=0.045, pad=0.04)
         cbar.set_label("Pearson correlation")
@@ -713,9 +750,13 @@ class Illustrator:
                 f"(neurons: {constants_str})",
                 ha="center", fontsize=8, color="0.3",
             )
-            fig.tight_layout(rect=(0.0, 0.04, 1.0, 1.0))
+            top = 0.95 if _show_title else 1.0
+            fig.tight_layout(rect=(0.0, 0.04, 1.0, top))
         else:
-            fig.tight_layout()
+            if _show_title:
+                fig.tight_layout(rect=[0, 0, 1, 0.95])
+            else:
+                fig.tight_layout()
 
         return C, fig
 
