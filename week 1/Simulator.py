@@ -555,3 +555,274 @@ def closed_loop_system(seed: Optional[int] = None, obs_dim: int = 16) -> Simulat
     x0 = np.array([1.0, 0.0, 0.5, -0.5])
 
     return Simulator(A, B_scaled, C, Q, R, x0=x0, seed=seed)
+
+def non_normal_system(seed: Optional[int] = None, obs_dim: int = 8) -> Simulator:
+    """Return a system whose transition matrix is non-normal: it produces a
+    large transient amplification despite all eigenvalues being well inside
+    the unit circle.
+
+    Design motivation:
+        All existing systems have transition matrices that are essentially
+        normal (rotation block + diagonal decays), so ||A^t||_2 decays
+        monotonically and an input or initial-condition impulse decays at
+        a rate set purely by max |lambda(A)|. The supervisor's first
+        scenario calls for a stable A whose ||A^t||_2 grows transiently
+        before decay -- a hallmark of non-orthogonal eigenvectors.
+
+        We build A as an upper-triangular feedforward chain:
+            A_ii = decay_top - i * decay_step  (4 distinct decay rates)
+            A_{i, i+1} = chain_gain            (above-diagonal coupling)
+        Eigenvalues are exactly the diagonal entries (so stability is
+        guaranteed and transparent), but right eigenvectors of A are
+        non-orthogonal and increasingly "tilted" the further up the chain
+        they sit. An impulse at the bottom of the chain (state n-1)
+        cascades upward through the superdiagonal couplings, accumulating
+        before all modes decay together.
+
+    Dynamics:
+        With the parameters chosen below:
+            eigenvalues : 0.92, 0.72, 0.52, 0.32
+            cond(V)     : ~ 74           (moderate, not pathological)
+            Henrici dep : ~ 0.77         (clearly non-normal)
+            ||A^t||_2 peaks at ~ 3.6 around t = 8, then decays.
+        Inputs are injected at the bottom of the chain; the random C
+        projection picks up the chain dynamics diffusely. The non-normal
+        peak is visible both in unforced trajectories (x0 has a unit at
+        the bottom of the chain) and in pulse-evoked responses.
+
+    Matrix shapes:
+        A  : (4, 4) -- upper-triangular feedforward chain
+        B  : (4, 2) -- inputs enter at state n-1 (channel 0) and n-2 (channel 1)
+        C  : (obs_dim, 4) -- i.i.d. N(0, 1) random projection
+        Q  : (4, 4) -- 1e-3 * I
+        R  : (obs_dim, obs_dim) -- 1e-2 * I
+        x0 : (4,) -- e_{n-1}: unit impulse at the bottom of the chain
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the random number generator used to draw C and for simulation noise.
+    obs_dim : int
+        Number of observed neurons; must be a positive integer.
+
+    Returns
+    -------
+    Simulator
+    """
+    _check_positive_int("obs_dim", obs_dim)
+
+    n = 4
+    decay_top, decay_step, chain_gain = 0.92, 0.20, 0.70
+    diag_vals = decay_top - decay_step * np.arange(n)
+    A = np.diag(diag_vals) + chain_gain * np.diag(np.ones(n - 1), k=1)
+
+    B = np.zeros((n, 2))
+    B[-1, 0] = 1.0
+    B[-2, 1] = 1.0
+
+    rng = np.random.default_rng(seed)
+    C = rng.standard_normal((obs_dim, n))
+
+    Q = 1e-3 * np.eye(n)
+    R = 1e-2 * np.eye(obs_dim)
+    x0 = np.zeros(n)
+    x0[-1] = 1.0
+
+    return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
+
+
+def hidden_input_system(seed: Optional[int] = None, obs_dim: int = 10) -> Simulator:
+    """Return a system where the input enters in the observation null-space:
+    C @ B = 0 exactly, so inputs are invisible at the instant they arrive
+    but become visible later through the action of A.
+
+    Design motivation:
+        The existing input_blind_system kills input visibility by setting
+        two columns of C to zero -- a very strong, rank-deficient choice.
+        The supervisor's second scenario is more general: the input drives
+        the latent state in directions that lie close to the null-space of
+        C, with effects becoming visible only after A rotates the state
+        out of that null-space. The Markov parameters
+            CB, C A B, C A^2 B, ...
+        characterise this delay: CB ~ 0 but CA^k B grows then decays.
+
+        We pick B (rank 2) with columns that span a non-axis-aligned 2D
+        subspace (primary weight on the oscillatory dimensions, smaller
+        projections onto the decay modes) and build C from random rows
+        projected onto span(B)^perp. This gives CB = 0 exactly while C
+        retains non-zero entries in all columns. A is a stable oscillator
+        weakly coupled into three real decays; the cross-coupling
+        A[2,0], A[3,1], A[4,2] are what rotate the input-driven state
+        into the observable subspace over time.
+
+    Dynamics:
+        With this construction:
+            ||C B||_F            = 0                  (input invisible at t=0)
+            ||C A B||_F          > 0                  (visible after one step)
+            eigenvalues          : one oscillatory pair at radius 0.95 and
+                                   period 16, plus three real decays
+                                   (0.80, 0.65, 0.55)
+        A pulse on either input channel produces zero immediate change in y
+        but a non-zero response from t=1 onward. Because B also has weight
+        on the decay modes, the response rises within the first 1-2 steps
+        (faster than in input_blind_system).
+
+    Matrix shapes:
+        A  : (5, 5) -- oscillator (2x2) + three diagonal decays + cross-coupling
+        B  : (5, 2) -- primary weight on oscillatory dims; smaller entries in
+                        decay dims so span(B) is not axis-aligned
+        C  : (obs_dim, 5) -- random rows projected onto span(B)^perp so CB = 0;
+                             all columns non-zero
+        Q  : (5, 5) -- 1e-3 * I
+        R  : (obs_dim, obs_dim) -- 1e-2 * I
+        x0 : (5,) -- zeros (system is at rest; only the input drives response)
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the random number generator used to draw C and for simulation noise.
+    obs_dim : int
+        Number of observed neurons; must be a positive integer.
+
+    Returns
+    -------
+    Simulator
+    """
+    _check_positive_int("obs_dim", obs_dim)
+
+    n = 5
+    radius, period = 0.95, 16.0
+    theta = 2 * np.pi / period
+    cs, sn = np.cos(theta), np.sin(theta)
+
+    A = np.zeros((n, n))
+    # 2x2 oscillator block
+    A[0, 0], A[0, 1] = radius * cs, -radius * sn
+    A[1, 0], A[1, 1] = radius * sn,  radius * cs
+    # Real decays
+    A[2, 2] = 0.80
+    A[3, 3] = 0.65
+    A[4, 4] = 0.55
+    # Cross-coupling: oscillator leaks into decays (rotates B out of null(C))
+    A[2, 0] = 0.40
+    A[3, 1] = 0.40
+    A[4, 2] = 0.30
+
+    # B drives the oscillatory dimensions primarily, with smaller projections into
+    # the decay modes so that span(B) is not axis-aligned. This ensures C (built
+    # below) has no zero columns while still satisfying CB = 0 exactly.
+    B = np.zeros((n, 2))
+    B[0, 0] = 1.0;  B[2, 0] = 0.3;  B[4, 0] = 0.2
+    B[1, 1] = 1.0;  B[3, 1] = 0.3;  B[4, 1] = 0.2
+
+    # Build C with rows in span(B)^perp so CB = 0 exactly.
+    # pinv handles non-orthogonal columns of B correctly.
+    P_perp = np.eye(n) - B @ np.linalg.pinv(B)
+    rng = np.random.default_rng(seed)
+    C_raw = rng.standard_normal((obs_dim, n))
+    C = C_raw @ P_perp
+
+    Q = 1e-3 * np.eye(n)
+    R = 1e-2 * np.eye(obs_dim)
+    x0 = np.zeros(n)
+
+    return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
+
+
+def ill_conditioned_system(seed: Optional[int] = None, obs_dim: int = 8) -> Simulator:
+    """Return a system whose eigenbasis is ill-conditioned: the eigenvalues
+    are well-separated, but the eigenvectors are nearly linearly dependent,
+    so modes mix unevenly into the state coordinates and produce different
+    apparent variance and frequency content across dimensions.
+
+    Design motivation:
+        The supervisor's third scenario distinguishes "non-normal" (large
+        ||A^t|| transients) from "ill-conditioned eigenbasis" (uneven mode
+        mixing). The two are mathematically related (cond(V) > 1 implies
+        non-orthogonal eigenvectors) but the *signatures* differ:
+            non-normal system  -> large transient peak in ||A^t||_2
+            ill-conditioned    -> uneven per-coordinate variance and
+                                  distorted apparent frequencies under
+                                  isotropic noise
+
+        We construct A = V Lambda V^{-1} with:
+            - Lambda: block-diagonal with one stable oscillator block
+                      (radius 0.95, period 24) plus two real decays
+                      (0.80, 0.60)
+            - V: a real matrix with cond(V) = cond_target, built by SVD
+                 with geometrically-spaced singular values.
+
+        Because Lambda's eigenvalues are well-separated, the *true* dynamics
+        contain three distinct timescales, but the ill-conditioned V mixes
+        them into the standard coordinate basis non-uniformly. Under
+        isotropic process noise the per-coordinate variance can differ by
+        factors of 5-10x even though Q = sigma^2 I, and FFT peak frequencies
+        of individual coordinates can be displaced from the true 24-step
+        period.
+
+    Dynamics:
+        With cond_target = 20:
+            cond(V)                ~ 20
+            max_t ||A^t||_2        ~ 10   (some transient growth, smaller
+                                           than non_normal_system relative
+                                           to peak)
+            Per-coord variance     varies by ~ 5x under isotropic noise
+            Apparent FFT periods   per coordinate can differ from the true
+                                   24-step underlying period
+        This is exactly the supervisor's "conditioning does not create new
+        true eigenfrequencies, but it can make different latent coordinates
+        appear to contain different frequencies".
+
+    Matrix shapes:
+        A  : (4, 4) -- V * Lambda * V^{-1} with Lambda block-diagonal
+        B  : (4, 2) -- random projection into the ill-conditioned basis
+        C  : (obs_dim, 4) -- i.i.d. N(0, 1) random projection
+        Q  : (4, 4) -- 1e-3 * I (isotropic; the conditioning is what
+                       distorts the apparent variance)
+        R  : (obs_dim, obs_dim) -- 1e-2 * I
+        x0 : (4,) -- random N(0, 0.3^2) so initial condition energy
+                     distributes across all modes
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the random number generator used to draw V, B, C, x0
+        and for simulation noise.
+    obs_dim : int
+        Number of observed neurons; must be a positive integer.
+
+    Returns
+    -------
+    Simulator
+    """
+    _check_positive_int("obs_dim", obs_dim)
+
+    n = 4
+    cond_target = 20.0
+    rng = np.random.default_rng(seed)
+
+    # Real-block representation of eigenvalues
+    radius, period = 0.95, 24.0
+    theta = 2 * np.pi / period
+    cs, sn = np.cos(theta), np.sin(theta)
+    Lambda_real = np.zeros((n, n))
+    Lambda_real[0, 0], Lambda_real[0, 1] = radius * cs, -radius * sn
+    Lambda_real[1, 0], Lambda_real[1, 1] = radius * sn,  radius * cs
+    Lambda_real[2, 2] = 0.80
+    Lambda_real[3, 3] = 0.60
+
+    # Build V with prescribed condition number via SVD with geometrically
+    # spaced singular values: cond(V) = cond_target exactly.
+    M = rng.standard_normal((n, n))
+    U_, _, Wt = np.linalg.svd(M)
+    s = np.logspace(0, -np.log10(cond_target), n)
+    V = U_ @ np.diag(s) @ Wt
+    A = V @ Lambda_real @ np.linalg.inv(V)
+
+    B = rng.standard_normal((n, 2))
+    C = rng.standard_normal((obs_dim, n))
+    Q = 1e-3 * np.eye(n)
+    R = 1e-2 * np.eye(obs_dim)
+    x0 = rng.standard_normal(n) * 0.3
+
+    return Simulator(A, B, C, Q, R, x0=x0, seed=seed)
