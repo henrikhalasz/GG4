@@ -124,6 +124,7 @@ def _check_channel(channel: int, input_dim: int) -> None:
 
 
 def zero_input(T: int, input_dim: int) -> np.ndarray:
+    """Return a (T, input_dim) array of zeros — no stimulation."""
     _check_positive_int("T", T)
     _check_positive_int("input_dim", input_dim)
     return np.zeros((T, input_dim))
@@ -131,6 +132,7 @@ def zero_input(T: int, input_dim: int) -> np.ndarray:
 
 def pulse_input(T: int, input_dim: int, channel: int = 0, start: int = 10,
                 duration: int = 5, amplitude: float = 1.0) -> np.ndarray:
+    """Return a (T, input_dim) array with a constant-amplitude pulse on one channel."""
     _check_positive_int("T", T)
     _check_channel(channel, input_dim)
     if not 0 <= start < T:
@@ -145,6 +147,7 @@ def pulse_input(T: int, input_dim: int, channel: int = 0, start: int = 10,
 def sinusoidal_input(T: int, input_dim: int, channel: int = 0,
                      amplitude: float = 1.0, period: float = 30.0,
                      phase: float = 0.0) -> np.ndarray:
+    """Return a (T, input_dim) array with a sinusoidal drive on one channel."""
     _check_positive_int("T", T)
     _check_channel(channel, input_dim)
     if period <= 0:
@@ -158,12 +161,14 @@ def sinusoidal_input(T: int, input_dim: int, channel: int = 0,
 
 def random_input(T: int, input_dim: int, amplitude: float = 1.0,
                  seed: Optional[int] = None) -> np.ndarray:
+    """Return a (T, input_dim) array of i.i.d. Gaussian white-noise inputs."""
     _check_positive_int("T", T)
     _check_positive_int("input_dim", input_dim)
     return amplitude * np.random.default_rng(seed).standard_normal((T, input_dim))
 
 
 def channel_sweep_input(T: int, input_dim: int, amplitude: float = 1.0) -> np.ndarray:
+    """Return a (T, input_dim) array that activates each channel in equal-length windows."""
     _check_positive_int("T", T)
     _check_positive_int("input_dim", input_dim)
 
@@ -175,6 +180,7 @@ def channel_sweep_input(T: int, input_dim: int, amplitude: float = 1.0) -> np.nd
 
 
 def mixed_input(T: int, input_dim: int, seed: Optional[int] = None) -> np.ndarray:
+    """Return a (T, input_dim) array combining a pulse, sinusoid, and small Gaussian noise."""
     u = pulse_input(T, input_dim, channel=0, start=max(1, T // 5), duration=max(1, T // 10))
     if input_dim > 1:
         u += sinusoidal_input(T, input_dim, channel=1, amplitude=0.5, period=max(2, T // 4))
@@ -183,6 +189,7 @@ def mixed_input(T: int, input_dim: int, seed: Optional[int] = None) -> np.ndarra
 
 
 def controllability_matrix(A, B) -> np.ndarray:
+    """Return the controllability matrix [B, AB, A²B, ...] of shape (n, n*m)."""
     A, B = np.asarray(A, dtype=float), np.asarray(B, dtype=float)
     if A.ndim != 2 or A.shape[0] != A.shape[1] or B.ndim != 2 or B.shape[0] != A.shape[0]:
         raise ValueError("Expected A with shape (n, n) and B with shape (n, m).")
@@ -194,6 +201,7 @@ def controllability_matrix(A, B) -> np.ndarray:
 
 
 def observability_matrix(A, C) -> np.ndarray:
+    """Return the observability matrix [C; CA; CA²; ...] of shape (n*p, n)."""
     A, C = np.asarray(A, dtype=float), np.asarray(C, dtype=float)
     if A.ndim != 2 or A.shape[0] != A.shape[1] or C.ndim != 2 or C.shape[1] != A.shape[0]:
         raise ValueError("Expected A with shape (n, n) and C with shape (p, n).")
@@ -205,6 +213,7 @@ def observability_matrix(A, C) -> np.ndarray:
 
 
 def matrix_rank(M, tol: float = 1e-10) -> int:
+    """Return the numerical rank of matrix M, treating singular values below tol as zero."""
     return int(np.linalg.matrix_rank(np.asarray(M, dtype=float), tol=tol))
 
 
