@@ -9,7 +9,7 @@ import warnings
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.cluster.hierarchy import leaves_list, linkage
+from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 from numpy.typing import ArrayLike
 
@@ -802,9 +802,10 @@ class Illustrator:
             inspecting the correlation structure.
         cluster : bool, default True
             If True, reorder rows/columns by average-linkage
-            hierarchical clustering so co-varying neurons sit next to
-            each other. Only the display order changes; the returned
-            matrix is always in the original neuron order.
+            hierarchical clustering with optimal leaf ordering so
+            co-varying neurons sit next to each other. Only the
+            display order changes; the returned matrix is always in
+            the original neuron order.
         title : str, optional
             Override or suppress the automatic title. Pass a string to
             use a custom title, or ``""`` to remove it. Defaults to an
@@ -862,10 +863,26 @@ class Illustrator:
         C, constant = self._corrcoef_with_nan(data)
 
         # --- 3. Hierarchical clustering for display order -----------------
+        # Average linkage on a (1 - C) distance, then reorder leaves with
+        # scipy's optimal leaf ordering so block structure reads cleanly.
+        # Constants (NaN diagonal) are excluded from clustering and
+        # appended at the end so they remain visible.
         do_cluster = cluster and (~constant).sum() >= 2
-        display_order = (
-            self._cluster_order(C) if do_cluster else np.arange(N)
-        )
+        if do_cluster:
+            valid = np.where(~constant)[0]
+            sub = C[np.ix_(valid, valid)]
+            dist = (1.0 - sub + (1.0 - sub).T) / 2.0
+            np.fill_diagonal(dist, 0.0)
+            dist = np.clip(dist, 0.0, 2.0)
+            condensed = squareform(dist, checks=False)
+            Z = optimal_leaf_ordering(
+                linkage(condensed, method="average"), condensed
+            )
+            display_order = np.concatenate(
+                [valid[leaves_list(Z)], np.where(constant)[0]]
+            )
+        else:
+            display_order = np.arange(N)
 
         # --- 4. Plot ------------------------------------------------------
         display = C[np.ix_(display_order, display_order)]
@@ -1045,23 +1062,3 @@ class Illustrator:
             C[constant, :] = np.nan
             C[:, constant] = np.nan
         return C, constant
-
-    @staticmethod
-    def _cluster_order(C: np.ndarray) -> np.ndarray:
-        """
-        Average-linkage display order from a Pearson matrix.
-
-        Constants (NaN diagonal) are appended after the clustered group
-        so they remain visible. Caller is responsible for checking that
-        at least two non-constant neurons exist.
-        """
-        constant = np.isnan(np.diag(C))
-        valid = np.where(~constant)[0]
-        sub = C[np.ix_(valid, valid)]
-        dist = (1.0 - sub + (1.0 - sub).T) / 2.0
-        np.fill_diagonal(dist, 0.0)
-        dist = np.clip(dist, 0.0, 2.0)
-        Z = linkage(squareform(dist, checks=False), method="average")
-        return np.concatenate(
-            [valid[leaves_list(Z)], np.where(constant)[0]]
-        )
