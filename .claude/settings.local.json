@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem *)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(venv/Scripts/python.exe -c \"import numpy, matplotlib, scipy; print\\('numpy', numpy.__version__\\); print\\('matplotlib', matplotlib.__version__\\); print\\('scipy', scipy.__version__\\)\")",
+      "Bash(venv/Scripts/python.exe -c \"import pytest; print\\('pytest', pytest.__version__\\)\")"
     ]
   }
 }
