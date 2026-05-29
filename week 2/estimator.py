@@ -1,54 +1,3 @@
-"""Week 2 submission — Approach B: subspace ID + Kalman filter + input estimation.
-
-This module estimates the hidden latent state and the unknown input of a
-partially-observed linear-Gaussian state-space system
-
-    x_{t+1} = A x_t + B u_t + w_t,    w_t ~ N(0, Q)
-    y_t     = C x_t + o_t,            o_t ~ N(0, R)
-
-given **only** the observation sequence ``y`` and the requested latent / input
-dimensions.  ``A, B, C, Q, R`` and the true ``u`` are unknown at test time and
-are learnt from the data.
-
-Pipeline (see ``week2.md`` §3 B):
-
-1. **Subspace identification (N4SID-style).**  Block-Hankel past/future matrices
-   of ``y`` are projected onto the past row space; a truncated SVD of that
-   projection yields the extended observability matrix ``Gamma`` from which
-   ``C_hat`` (its first block row) and ``A_hat`` (its shift-invariance) are read
-   off.
-2. **Input matrix ``B_hat``.**  A Kalman filter is run with ``B = 0``; the part of
-   the one-step latent residual ``x_t - A_hat x_{t-1}`` that the autonomous model
-   cannot explain is decomposed by SVD, and its top ``m`` left singular vectors
-   become the columns of ``B_hat``.
-3. **Two-pass Kalman filtering + input estimation.**  Pass 1 filters with
-   ``u = 0``; the input that best explains the filtered dynamics is estimated as
-   ``u_t = pinv(B_hat) (x_{t+1} - A_hat x_t)`` and fed back into a second filter
-   pass.
-
-Public interface (fixed by the brief — do not change):
-
-    estimate_latent_and_input(observation, LatentDim, InputDim)
-        -> (latent_states (T, LatentDim), inputs (T, InputDim))
-
-Identifiability note (``week2.md`` §3 B.4)
-------------------------------------------
-Subspace ID recovers ``(A, B, C)`` only up to an arbitrary similarity transform
-``T in GL(n)``: the triple ``(T^{-1} A T, T^{-1} B, C T)`` reproduces the exact
-same output statistics.  Two consequences the caller must keep in mind:
-
-* The returned ``latent_states`` live in an internal coordinate frame that is
-  **not** the simulator's true ``x``.  Compare models through predicted
-  observations ``y_hat = C_hat @ x_hat`` (basis-invariant), not by overlaying the
-  raw states — or align first (e.g. Procrustes).
-* The returned ``inputs`` are identifiable only up to a linear map of input
-  space.  Compare via a best linear fit ``M @ u_hat ~ u`` and report its R^2 /
-  residual, never by direct subtraction.
-
-Dependencies: ``numpy`` + the Python standard library only (no scipy / sklearn),
-so the demonstrator's environment is guaranteed to run it.
-"""
-
 from __future__ import annotations
 
 import warnings
@@ -56,7 +5,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-# --- Fixed hyperparameters (never tuned at call time) ----------------------
+# --- Fixed hyperparameters  -----------------------------------------------
 _COV_SHRINKAGE = 1e-6   # added to identified Q_hat / R_hat (keeps them PD)
 _INV_JITTER = 1e-8      # added before every explicit inverse / on covariances
 _N_FILTER_PASSES = 2    # forward Kalman passes (pass 1: u=0; pass 2: with u_hat)
@@ -68,7 +17,7 @@ _SPECTRAL_TARGET = 0.999  # value the spectral radius is pulled back to when cap
 # Small numerical helpers
 # ---------------------------------------------------------------------------
 def _regularize_cov(matrix: np.ndarray, jitter: float) -> np.ndarray:
-    """Symmetrise ``matrix`` and add ``jitter * I`` to keep it positive-definite.
+    """Symmetrise and add jitter * I so the result stays positive-definite.
 
     Parameters
     ----------
@@ -102,7 +51,7 @@ def _safe_inverse(matrix: np.ndarray) -> np.ndarray:
 
 
 def _select_block_size(T: int, n: int) -> int:
-    """Choose the Hankel block size ``k`` (``week2.md`` §3 B.1).
+    """Choose the Hankel block size ``k``
 
     Robust default ``k = max(2n, ceil(sqrt(T) / 2))`` clipped so the Hankel
     matrix keeps at least ``4k`` columns (``j = T - 2k + 1 >= 4k``) and so that
@@ -188,10 +137,6 @@ def _kalman_filter(
 ) -> np.ndarray:
     """Run a standard linear Kalman filter and return the filtered states.
 
-    The model is ``x_{t+1} = A x_t + B u_t + w``, ``y_t = C x_t + o``.  The input
-    convention matches the simulator: ``u[t]`` drives the transition from ``x_t``
-    to ``x_{t+1}``, so the prediction of ``x_t`` uses ``u[t-1]``.
-
     Parameters
     ----------
     Y : np.ndarray, shape (T, p)
@@ -274,7 +219,7 @@ def _fit_subspace_model(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Identify ``(A_hat, B_hat, C_hat, Q_hat, R_hat)`` from centred observations.
 
-    Implements ``week2.md`` §3 B.1: N4SID-style subspace identification for
+    Implements N4SID-style subspace identification for
     ``A_hat`` / ``C_hat``, a residual-SVD construction (Option 1) for ``B_hat``,
     and residual covariances (with shrinkage) for ``Q_hat`` / ``R_hat``.
 
@@ -331,16 +276,6 @@ def _fit_subspace_model(
     R0, Q0 = np.atleast_2d(R0), np.atleast_2d(Q0)
 
     # --- Refine A by regression on the filtered state --------------------
-    # The plain shift-invariance estimate is biased when the (unknown) input
-    # drives the data: the input is correlated with the state and contaminates
-    # the unforced Hankel projection. Regressing the autonomously-filtered state
-    # x_{t+1} on x_t gives the maximum-likelihood transition under the assumption
-    # that the input acts like extra process noise (exact for broadband inputs).
-    # For strongly autocorrelated inputs an unidentifiable rank-m component of A
-    # is absorbed into the input channel -- this compounds the §3 B.4 similarity
-    # ambiguity (see module note). The Kalman state estimate stays accurate
-    # regardless of A error (it is corrected by the observations), so the refit
-    # operates on a clean state sequence.
     B_zero = np.zeros((n, m))
     x_auto = _kalman_filter(Y, A_hat, B_zero, C_hat, Q0, R0, u=None)
     if x_auto.shape[0] > n + 1:
@@ -370,12 +305,7 @@ def _fit_subspace_model(
 
 
 def fit_and_filter(observation: np.ndarray, LatentDim: int, InputDim: int) -> Dict[str, np.ndarray]:
-    """Run the full Approach-B pipeline and return every intermediate quantity.
-
-    This is the analysis-friendly entry point used by the notebook: it exposes
-    the identified system matrices and the observation mean alongside the filtered
-    states, so reconstructions ``y_hat = x_hat @ C^T + y_mean`` can be formed.
-    ``estimate_latent_and_input`` is a thin, crash-proof wrapper around it.
+    """Run the full pipeline and return every intermediate quantity.
 
     Parameters
     ----------
@@ -423,7 +353,7 @@ def estimate_latent_and_input(
     LatentDim: int,
     InputDim: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Estimate latent states and inputs from observed activity (submission API).
+    """Estimate latent states and inputs from observed activity.
 
     Parameters
     ----------
@@ -437,17 +367,9 @@ def estimate_latent_and_input(
     Returns
     -------
     latent_states : np.ndarray, shape (T, LatentDim)
-        Estimated latent states (Kalman-filtered, in the internal subspace basis).
+        Estimated latent states
     inputs : np.ndarray, shape (T, InputDim)
-        Estimated inputs (identifiable up to a linear map; see module note).
-
-    Notes
-    -----
-    This function is contractually guaranteed never to crash and to always return
-    arrays of shape ``(T, LatentDim)`` / ``(T, InputDim)``.  If identification
-    fails or produces a non-finite result it emits a ``warnings.warn`` and falls
-    back to zero-filled outputs of the correct shape, so the demonstrator's test
-    harness never raises.
+        Estimated inputs
     """
     Y = np.asarray(observation, dtype=float)
     T = Y.shape[0] if Y.ndim >= 1 else 0
@@ -466,7 +388,7 @@ def estimate_latent_and_input(
         if not (np.all(np.isfinite(latent)) and np.all(np.isfinite(inputs))):
             raise FloatingPointError("estimate contained NaN or inf")
         return latent, inputs
-    except Exception as exc:  # never crash the demonstrator's harness
+    except Exception as exc:
         warnings.warn(
             f"estimate_latent_and_input: falling back to zeros ({type(exc).__name__}: {exc})",
             RuntimeWarning,
