@@ -7,4 +7,6 @@ __pycache__/
 venv/
 *.png
 *.jpg
+.whk
+*.whl
 .vscode/
