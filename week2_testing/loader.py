@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Callable, Dict, Tuple, Union
 import importlib.util
+import sys
 import numpy as np
 
 
@@ -39,31 +40,42 @@ def load_estimator_functions(folder: Union[str, Path]) -> Dict[str, EstimatorFun
         raise NotADirectoryError(f"Not a folder: {folder}")
 
     estimators: Dict[str, EstimatorFunction] = {}
+    folder_str = str(folder)
+    added_to_path = False
 
-    for py_file in folder.glob("*.py"):
-        if py_file.name.startswith("__"):
-            continue
+    if folder_str not in sys.path:
+        sys.path.insert(0, folder_str)
+        added_to_path = True
 
-        module_name = f"_loaded_estimator_{py_file.stem}"
+    try:
+        for py_file in folder.glob("*.py"):
+            if py_file.name.startswith("__") or py_file.name.startswith("test_"):
+                continue
 
-        spec = importlib.util.spec_from_file_location(module_name, py_file)
+            module_name = f"_loaded_estimator_{py_file.stem}"
 
-        if spec is None or spec.loader is None:
-            continue
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
 
-        module = importlib.util.module_from_spec(spec)
+            if spec is None or spec.loader is None:
+                continue
 
-        try:
-            spec.loader.exec_module(module)
-        except Exception:
-            # Ignore files that cannot be imported.
-            continue
+            module = importlib.util.module_from_spec(spec)
 
-        func = getattr(module, "estimate_latent_and_input", None)
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                # Ignore files that cannot be imported.
+                continue
 
-        if callable(func):
-            # remove after space
-            filename = py_file.stem.split()[0]
-            estimators[filename] = func
+            func = getattr(module, "estimate_latent_and_input", None)
+
+            if callable(func):
+                estimators[py_file.name] = func
+    finally:
+        if added_to_path:
+            try:
+                sys.path.remove(folder_str)
+            except ValueError:
+                pass
 
     return estimators
