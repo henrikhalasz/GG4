@@ -13,7 +13,7 @@ from control.plant import SimulatorPlant  # noqa: E402
 from control.observer import SteadyStateKalman  # noqa: E402
 from control.controllers import LQG, MPC  # noqa: E402
 from control.closed_loop import run_closed_loop  # noqa: E402
-from control.metrics import rms, control_effort  # noqa: E402
+from metrics import rms, control_effort  # noqa: E402
 
 
 class MPCBoxConstraintAndRMS(unittest.TestCase):

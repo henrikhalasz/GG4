@@ -31,8 +31,8 @@ from control.controllers import OpenLoop, ProportionalFeedback, LQG, MPC, PolePl
 from control.closed_loop import run_closed_loop  # noqa: E402
 from control.control_interface import IdentifiedSystem  # noqa: E402
 from control.reachability import steady_state_gain, feasibility  # noqa: E402
-from control.control_interface import compute_pca_readout  # noqa: E402
-from control.metrics import (
+from control.readouts import compute_pca_readout  # noqa: E402
+from metrics import (
     rms, control_effort, saturation_fraction, state_r2_aligned, spectral_radius  # noqa: E402
 )
 

@@ -1,0 +1,5 @@
+x,y,radius,n_seeds,landing_rate,median_steps_landed,median_path_ratio_landed,mean_final_err,limit_cycle_rate,near_miss_rate,stall_rate
+-0.0,-30.0,30.0,1,0.0,-1,-1,6.494,1.0,0.0,0.0
+30.0,0.0,30.0,1,0.0,-1,-1,7.271,1.0,0.0,0.0
+0.0,30.0,30.0,1,1.0,145,1.358,0.494,0.0,0.0,0.0
+-30.0,0.0,30.0,1,1.0,221,1.599,1.488,0.0,0.0,0.0

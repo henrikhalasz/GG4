@@ -1,0 +1,47 @@
+==============================================================================
+  M1 — Initial investigation of the real Brain
+==============================================================================
+
+[1] Contract (seed 0)
+    input_dim      = 2
+    obs_dim        = 16
+    first measure: range [-1.60, 1.82]
+
+[2] Observation noise (R from 2000 frozen-state samples)
+    per-channel std (16 outputs):
+    [0.905, 0.97, 0.9, 0.92, 0.941, 0.93, 0.919, 0.922, 0.976, 0.993, 0.927, 0.897, 0.891, 0.889, 1.014, 0.909]
+    median per-channel std = 0.921
+    ||R||_F              = 3.795
+
+[3] Autonomous behaviour (u ≡ 0 for T=400 steps)
+    per-channel std over T: median 1.11, max 1.22
+    autonomous mean (y_ss) sample = [0.12, 0.3, 0.18, 0.11] …
+
+[4] Order via Hankel SV knee (T_impulse=300)
+    σ[0..12] = [22.766, 5.066, 2.877, 2.14, 0.226, 0.077, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    largest drop at k = 6  (σ[6]/σ[5] = 2.93e-12)
+    spec prediction n = 6   → CONFIRMED
+
+[5] Seed-invariance (eigvals + DC gain across seeds [0, 1, 2])
+    eigenvalues (sorted, |·|) per seed:
+      seed 0: ['0.0172', '0.8358', '0.9232', '0.9514', '0.9514', '0.9661']
+      seed 1: ['0.0172', '0.8358', '0.9232', '0.9514', '0.9514', '0.9661']
+      seed 2: ['0.0172', '0.8358', '0.9232', '0.9514', '0.9514', '0.9661']
+    pairwise max |λ_i − λ_j|         = 3.02e-14
+    pairwise max ||G_i − G_j||/||G_i|| = 1.39e-14
+    → seed-invariance CONFIRMED (model is fixed across seeds)
+
+[6] Control authority — singular values of full DC gain
+    σ(G) = ['42.3783', '0.3372']
+    σ[1]/σ[0] = 7.9565e-03  (near rank-1 (one sustainable direction))
+    dominant output direction (first 4 comps) = [-0.27, -0.24, -0.249, -0.186] …
+    reachable extent on dominant direction in u ∈ [0,1]^m = 3.71
+
+[7] Saving ground-truth models
+    saved results\ground_truth\seed_0.npz — ρ(A)=0.966, tr(Q)=0.847, tr(R)=13.904
+    saved results\ground_truth\seed_1.npz — ρ(A)=0.966, tr(Q)=0.943, tr(R)=14.004
+    saved results\ground_truth\seed_2.npz — ρ(A)=0.966, tr(Q)=0.894, tr(R)=14.001
+
+[8] Figure → C:\Github\GG4\week3\results\m1_initial_investigation.png
+
+[done]  total wall-clock = 211.0s

@@ -32,7 +32,7 @@ from control.observer import SteadyStateKalman  # noqa: E402
 from control.controllers import OpenLoop, ProportionalFeedback, LQG, MPC, PolePlacement  # noqa: E402
 from control.closed_loop import run_closed_loop  # noqa: E402
 from control.reachability import steady_state_gain, feasibility  # noqa: E402
-from control.metrics import rms, control_effort, saturation_fraction, spectral_radius  # noqa: E402
+from metrics import rms, control_effort, saturation_fraction, spectral_radius  # noqa: E402
 
 
 SCENARIOS = [
@@ -48,7 +48,7 @@ SCENARIOS = [
 # Readout choice: 2 leading principal components of the scenario's measurements
 # under a short open-loop probe (spec §3). Each PC is one weighted combination
 # of the p measurements, capturing a dominant pattern of population activity.
-from control.control_interface import compute_pca_readout  # noqa: E402
+from control.readouts import compute_pca_readout  # noqa: E402
 
 
 def scenario_pca_M(system, T_probe: int = 600, probe_seed: int = 42,

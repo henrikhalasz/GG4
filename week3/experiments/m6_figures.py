@@ -54,13 +54,12 @@ from control.controllers import (  # noqa: E402
     PI, LQGI, OffsetFreeMPC,
 )
 from control.closed_loop import run_closed_loop  # noqa: E402
-from control.control_interface import (  # noqa: E402
-    IdentifiedSystem, compute_pca_readout, readout_steady_state_gain,
-)
+from control.control_interface import IdentifiedSystem  # noqa: E402
+from control.readouts import compute_pca_readout, readout_steady_state_gain  # noqa: E402
 from control.reachability import steady_state_gain, zonotope_vertices  # noqa: E402
-from control.metrics import rms, control_effort, saturation_fraction  # noqa: E402
+from metrics import rms, control_effort, saturation_fraction  # noqa: E402
 
-from control.plotting import (  # noqa: E402
+from viz.style import (  # noqa: E402
     CONTROLLER_COLORS, LABEL_PC1, LABEL_PC2, LABEL_TIME, LABEL_U,
     LABEL_HOLD_REGION,
     set_question_title, plot_desired_vs_achieved, plot_holdable_region_2d,

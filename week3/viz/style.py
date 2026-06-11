@@ -18,16 +18,21 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-# Controller → colour map. Same across every E3 figure so a reader can scan.
+# Controller → colour map. One scheme, used by every comparison figure
+# so a reader who learns the colours once can scan any plot. Aliases keep
+# the canonical class names (``ProportionalFeedback``, ``PolePlacement``)
+# and the short labels (``PropFeedback``, ``PolePlace``) both routing here.
 CONTROLLER_COLORS = {
-    "OpenLoop":      "#888888",  # neutral grey
-    "PropFeedback":  "#d62728",  # red
-    "LQG":           "#1f77b4",  # blue
-    "PolePlace":     "#9467bd",  # purple
-    "MPC":           "#2ca02c",  # green
-    "PI":            "#e377c2",  # pink
-    "LQGI":          "#17becf",  # cyan
-    "OffsetFreeMPC": "#bcbd22",  # olive
+    "OpenLoop":             "#888888",  # neutral grey
+    "ProportionalFeedback": "#d62728",  # red
+    "PropFeedback":         "#d62728",
+    "LQG":                  "#1f77b4",  # blue
+    "PolePlacement":        "#9467bd",  # purple
+    "PolePlace":            "#9467bd",
+    "MPC":                  "#2ca02c",  # green
+    "PI":                   "#e377c2",  # pink
+    "LQGI":                 "#17becf",  # cyan
+    "OffsetFreeMPC":        "#bcbd22",  # olive
 }
 
 # Plain-language axis labels. Use everywhere instead of "z[0]" / "z[1]".

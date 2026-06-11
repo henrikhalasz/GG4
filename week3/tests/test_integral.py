@@ -26,11 +26,8 @@ from control.plant import SimulatorPlant  # noqa: E402
 from control.observer import SteadyStateKalman  # noqa: E402
 from control.controllers import LQG, LQGI, OffsetFreeMPC, PI  # noqa: E402
 from control.closed_loop import run_closed_loop  # noqa: E402
-from control.control_interface import (  # noqa: E402
-    compute_pca_readout,
-    readout_steady_state_gain,
-    IdentifiedSystem,
-)
+from control.control_interface import IdentifiedSystem  # noqa: E402
+from control.readouts import compute_pca_readout, readout_steady_state_gain  # noqa: E402
 
 
 def _rms(arr: np.ndarray) -> float:

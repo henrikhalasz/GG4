@@ -1,0 +1,77 @@
+==============================================================================
+  M3 — Benchmark study: control performance as the headline
+==============================================================================
+
+[A] Headline — honest vs yardstick, hold task on real Brain
+    common readout M from seed 0 probe (T=2000)
+    yardstick G = [[42.176, -3.694], [-1.6, 0.476]]
+    target ref  = [19.981, -0.632] (yardstick zonotope midpoint)
+
+  [seed 0]
+    honest   : pred_rms=0.996  ss×NF=1.15  settle=298  effort=149.4
+    yardstick: pred_rms=0.980  ss×NF=1.11  settle=298  effort=241.7
+    OpenLoop : (ref)                ss×NF=11.76    (the gap to honest/yardstick is the closed-loop win)
+
+  [seed 1]
+    honest   : pred_rms=1.000  ss×NF=1.20  settle=298  effort=202.1
+    yardstick: pred_rms=1.002  ss×NF=1.21  settle=297  effort=321.7
+    OpenLoop : (ref)                ss×NF=11.97    (the gap to honest/yardstick is the closed-loop win)
+
+  [seed 2]
+    honest   : pred_rms=1.035  ss×NF=1.55  settle=300  effort=316.6
+    yardstick: pred_rms=0.988  ss×NF=1.41  settle=300  effort=158.8
+    OpenLoop : (ref)                ss×NF=11.64    (the gap to honest/yardstick is the closed-loop win)
+
+[B] Data efficiency — control + prediction vs T_cal
+    same readout + target as study A
+    seed 0 OL reference: ss×NF = 11.76
+    seed 1 OL reference: ss×NF = 11.97
+    seed 2 OL reference: ss×NF = 11.64
+
+  [T_cal = 100]
+    seed 0: pred=1.087  LQG  ss×NF=1.41  LQGI ss×NF=1.38
+    seed 1: pred=1.068  LQG  ss×NF=1.21  LQGI ss×NF=1.22
+    seed 2: pred=1.124  LQG  ss×NF=2.86  LQGI ss×NF=2.64
+
+  [T_cal = 200]
+    seed 0: pred=1.011  LQG  ss×NF=1.44  LQGI ss×NF=1.19
+    seed 1: pred=1.046  LQG  ss×NF=1.19  LQGI ss×NF=1.22
+    seed 2: pred=1.039  LQG  ss×NF=1.54  LQGI ss×NF=1.73
+
+  [T_cal = 500]
+    seed 0: pred=0.995  LQG  ss×NF=1.17  LQGI ss×NF=1.17
+    seed 1: pred=1.016  LQG  ss×NF=1.16  LQGI ss×NF=1.19
+    seed 2: pred=1.026  LQG  ss×NF=1.39  LQGI ss×NF=1.39
+
+  [T_cal = 1000]
+    seed 0: pred=0.996  LQG  ss×NF=1.15  LQGI ss×NF=1.14
+    seed 1: pred=1.000  LQG  ss×NF=1.20  LQGI ss×NF=1.20
+    seed 2: pred=1.035  LQG  ss×NF=1.55  LQGI ss×NF=1.69
+
+  [T_cal = 2000]
+    seed 0: pred=1.000  LQG  ss×NF=1.17  LQGI ss×NF=1.13
+    seed 1: pred=1.019  LQG  ss×NF=1.16  LQGI ss×NF=1.19
+    seed 2: pred=1.038  LQG  ss×NF=1.49  LQGI ss×NF=1.69
+
+[C] Local minima — EM from {n4sid, output_ssi, random} inits
+
+  [seed 0]
+    OL reference ss×NF = 11.76
+    init=      n4sid: iters= 53  ll_final=-21347.7  pred=0.996  ss×NF=1.15
+    init= output_ssi: iters=  3  ll_final=-21484.2  pred=1.027  ss×NF=1.16
+    init=     random: iters= 64  ll_final=-21223.6  pred=0.978  ss×NF=1.14
+
+  [seed 1]
+    OL reference ss×NF = 11.97
+    init=      n4sid: iters= 75  ll_final=-21535.2  pred=1.000  ss×NF=1.20
+    init= output_ssi: iters=  3  ll_final=-21740.3  pred=1.055  ss×NF=6.30
+    init=     random: iters= 80  ll_final=-21496.0  pred=0.996  ss×NF=1.19
+
+  [seed 2]
+    OL reference ss×NF = 11.64
+    init=      n4sid: iters= 12  ll_final=-21701.6  pred=1.035  ss×NF=1.55
+    init= output_ssi: iters=  3  ll_final=-21693.7  pred=1.036  ss×NF=1.52
+    init=     random: iters= 80  ll_final=-21447.9  pred=0.987  ss×NF=1.61
+
+[done]  total wall-clock = 532.7s
+figure: C:\Github\GG4\week3\results\m3_benchmark_study.png

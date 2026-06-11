@@ -1,0 +1,65 @@
+==============================================================================
+  M4 — Controller comparison on both readouts + integral mechanism
+==============================================================================
+
+[brain] 8 controllers × 2 readouts × hold task
+
+  [seed 0]
+    1-D readout: ref = [1.121]  reachable extent = 3.72  noise floor = 1.436
+    2-D readout: ref = [19.982, 0.455]  noise floor = 1.729
+
+    [readout = 1d]  hold task
+                        ctrl   ss_err  x noise    occ  settle   effort    sat
+                    OpenLoop    2.353     1.64   0.02      17      0.0   1.00
+        ProportionalFeedback   42.586    29.65   0.00     300    279.7   0.94
+                          PI   42.590    29.65   0.00     300    295.1   0.99
+                         LQG    2.331     1.62   0.02      47      3.4   0.97
+                        LQGI    2.367     1.65   0.02      64      4.1   0.97
+               PolePlacement   21.533    14.99   0.00     300    270.6   0.99
+                         MPC    2.568     1.79   0.01      95    300.3   0.94
+               OffsetFreeMPC    2.568     1.79   0.01      95    300.3   0.94
+
+    [readout = 2d]  hold task
+                        ctrl   ss_err  x noise    occ  settle   effort    sat
+                    OpenLoop   20.304    11.75   0.00     300      0.0   1.00
+        ProportionalFeedback    6.690     3.87   0.00     300    102.9   0.25
+                          PI    2.607     1.51   0.43      28    245.5   0.23
+                         LQG    1.980     1.15   0.57      28    149.1   0.59
+                        LQGI    2.297     1.33   0.46      28    214.1   0.49
+               PolePlacement    3.803     2.20   0.22      52    271.7   0.98
+                         MPC    2.167     1.25   0.51      40    197.7   0.52
+               OffsetFreeMPC    2.164     1.25   0.52      40    197.6   0.52
+
+  [seed 1]
+    1-D readout: ref = [2.354]  reachable extent = 3.72  noise floor = 1.422
+    2-D readout: ref = [18.466, -3.131]  noise floor = 1.715
+
+    [readout = 1d]  hold task
+                        ctrl   ss_err  x noise    occ  settle   effort    sat
+                    OpenLoop    2.419     1.70   0.05      31      0.0   1.00
+        ProportionalFeedback   43.921    30.88   0.00     300    287.6   0.96
+                          PI   43.923    30.88   0.00     300    296.5   0.99
+                         LQG    2.420     1.70   0.04      31      1.8   0.90
+                        LQGI    2.462     1.73   0.07      31      3.2   0.88
+               PolePlacement   21.500    15.12   0.00     300    208.1   1.00
+                         MPC    2.349     1.65   0.08      27    300.1   0.99
+               OffsetFreeMPC    2.349     1.65   0.08      27    300.1   0.99
+
+    [readout = 2d]  hold task
+                        ctrl   ss_err  x noise    occ  settle   effort    sat
+                    OpenLoop   19.347    11.28   0.00     300      0.0   1.00
+        ProportionalFeedback    6.678     3.89   0.01      74     90.6   0.44
+                          PI    2.629     1.53   0.35      25    147.6   0.21
+                         LQG    2.154     1.26   0.41      11    175.6   0.35
+                        LQGI    2.155     1.26   0.44      11    177.8   0.45
+               PolePlacement    2.971     1.73   0.30      38    208.1   1.00
+                         MPC    2.153     1.25   0.43      11    178.1   0.47
+               OffsetFreeMPC    2.151     1.25   0.43      11    178.1   0.47
+
+[mechanism] integral on deliberately mismatched synthetic
+  LQG (no integral, biased model): steady-state err = 2.270
+  LQGI (integral, biased model)  : steady-state err = 0.004
+  → integral closes the offset by 614.2× on this bias-dominated synthetic
+
+[done]  wall-clock = 19.0s
+figure: C:\Github\GG4\week3\results\m4_controller_comparison.png

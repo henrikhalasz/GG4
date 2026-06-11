@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent / "week 1"))
 
 import Simulator as sim  # noqa: E402
-from estimator_new import EstimatorNew  # noqa: E402
+from estimator.identify import EstimatorNew  # noqa: E402
 
 
 def collect_probe(system, T_cal, seed=42):

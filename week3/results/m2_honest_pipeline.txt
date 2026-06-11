@@ -1,0 +1,28 @@
+==============================================================================
+  M2 — Honest N4SID → EM pipeline at n = 6
+==============================================================================
+
+[seed 0]
+  order selection (N4SID Hankel knee): n_hat = 10  (differs)
+  EM iters = 53,  ll: -21757.2 → -21347.7,  ρ(A_fit) = 0.9108
+  held-out one-step RMS = 0.997  (y-RMS 4.732; ratio 0.211)
+  fit noise floor √median(diag R) = 0.729  ⇒ one-step / noise-floor = 1.37
+  vs yardstick — max |Δeig| = 8.872e-01, DC gain rel err = 1.852e-01, Markov rel err = 2.488e-01
+
+[seed 1]
+  order selection (N4SID Hankel knee): n_hat = 10  (differs)
+  EM iters = 75,  ll: -22052.1 → -21535.2,  ρ(A_fit) = 0.9535
+  held-out one-step RMS = 0.992  (y-RMS 4.879; ratio 0.203)
+  fit noise floor √median(diag R) = 0.770  ⇒ one-step / noise-floor = 1.29
+  vs yardstick — max |Δeig| = 9.383e-01, DC gain rel err = 2.884e-01, Markov rel err = 2.929e-01
+
+[seed 2]
+  order selection (N4SID Hankel knee): n_hat = 10  (differs)
+  EM iters = 12,  ll: -21939.1 → -21701.6,  ρ(A_fit) = 0.8267
+  held-out one-step RMS = 1.023  (y-RMS 4.456; ratio 0.230)
+  fit noise floor √median(diag R) = 0.740  ⇒ one-step / noise-floor = 1.38
+  vs yardstick — max |Δeig| = 8.439e-01, DC gain rel err = 6.344e-01, Markov rel err = 5.997e-01
+
+[done]  total wall-clock = 18.8s
+
+figure: C:\Github\GG4\week3\results\m2_honest_pipeline.png

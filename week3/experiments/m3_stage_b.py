@@ -41,7 +41,7 @@ from control.controllers import OpenLoop, LQG, MPC  # noqa: E402
 from control.closed_loop import run_closed_loop  # noqa: E402
 from control.control_interface import IdentifiedSystem  # noqa: E402
 from control.reachability import steady_state_gain, zonotope_vertices, feasibility  # noqa: E402
-from control.metrics import rms, control_effort, saturation_fraction  # noqa: E402
+from metrics import rms, control_effort, saturation_fraction  # noqa: E402
 
 
 # Note: the readout M is now the 2 leading PCs of the calibration measurements,

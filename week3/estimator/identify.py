@@ -1,4 +1,4 @@
-"""estimator_new.py — Affine LGSSM identification (EM with known inputs).
+"""estimator/identify.py — Affine LGSSM identification (EM with known inputs).
 
 Model fitted in TRUE input units (no input centring):
 
@@ -69,6 +69,212 @@ def _logpdf_mvn_zero(x: np.ndarray, S: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 # Hankel/SVD warm start (reused idea from the Week-2 estimator)
 # ---------------------------------------------------------------------------
+def _block_hankel(X: np.ndarray, k: int, t0: int, j: int) -> np.ndarray:
+    """Block-Hankel slice of ``X`` with ``k`` row-blocks starting at time ``t0``.
+
+    Returns a ``(k * X.shape[1], j)`` matrix whose ``i``-th block row is
+    ``X[t0+i : t0+i+j].T``.
+    """
+    T, d = X.shape
+    if t0 + k + j - 1 > T:
+        raise ValueError(f"block-Hankel out of range: t0={t0}, k={k}, j={j}, T={T}")
+    H = np.empty((k * d, j))
+    for i in range(k):
+        H[i * d:(i + 1) * d, :] = X[t0 + i:t0 + i + j, :].T
+    return H
+
+
+def _n4sid_init(
+    Y: np.ndarray, U: np.ndarray, n: int, k: Optional[int] = None
+) -> Dict:
+    """N4SID input-output subspace initialisation (Van Overschee & De Moor).
+
+    Returns a warm-start dict matching :func:`_warm_start`'s contract
+    (``A, B, C, Q, R, a, c, x0_mean, P0, y_mean``) but uses the **oblique
+    projection of the future outputs onto the past inputs+outputs along the
+    future inputs** to recover the extended observability matrix — the
+    distinguishing feature of N4SID vs the output-only Hankel SVD.
+
+    Steps (with window size ``k``, data columns ``j = T − 2k + 1``):
+
+    1. Build block-Hankel matrices ``U_p, U_f, Y_p, Y_f`` (past/future).
+    2. Combined past ``W_p = [U_p; Y_p]``.
+    3. Oblique projection ``O_i = Y_f / U_f * W_p`` (project ``Y_f`` onto
+       ``[W_p; U_f]`` via least squares, keep only the ``W_p`` part).
+    4. SVD ``O_i = U Σ V^T``; truncate to rank ``n``. Then
+       ``Γ = U_n √Σ_n``  (extended observability, shape ``(k p, n)``) and
+       ``X̂_i = √Σ_n V_n^T`` (state estimate at time ``i = k``, ``(n, j)``).
+    5. ``C = Γ[:p, :]`` and ``A = pinv(Γ[:-p, :]) @ Γ[p:, :]`` (shift-invariance).
+    6. Build a smooth state trajectory by running a Kalman *prediction*
+       pass with the (A, C) just recovered and tentative ``Q, R = I``;
+       then regress ``[A B a]`` and ``[C c]`` from that state sequence and
+       capture residual covariances ``Q, R`` for the EM seed.
+
+    If any step fails numerically, falls back to :func:`_warm_start`.
+    """
+    T, p = Y.shape
+    m = U.shape[1]
+    if k is None:
+        # Window length: needs k ≥ n + 1 for shift-invariance; the lstsq
+        # in step (3) has ((m + p) k + m k) rows by j cols and wants
+        # j > (m + p) k. Pick k around 2n with the constraint T ≥ 2k + 1 + j.
+        k = max(2 * n, 3)
+        # Keep j > (m + p) k by at least 2× safety.
+        while T - 2 * k + 1 < 3 * (m + p) * k and k > n + 1:
+            k -= 1
+    j = T - 2 * k + 1
+    if j < (m + p) * k + 1 or k < n + 1:
+        # Not enough data — fall back to output-only init.
+        return _warm_start(Y, U, n)
+
+    y_mean = Y.mean(axis=0)
+    Yc = Y - y_mean
+
+    try:
+        U_p = _block_hankel(U, k, 0, j)
+        U_f = _block_hankel(U, k, k, j)
+        Y_p = _block_hankel(Yc, k, 0, j)
+        Y_f = _block_hankel(Yc, k, k, j)
+        W_p = np.vstack([U_p, Y_p])
+        n_w = W_p.shape[0]
+        Z = np.vstack([W_p, U_f])
+        # Oblique projection: regress each row of Y_f onto Z, keep only the
+        # W_p part of the coefficient. coef.shape == (n_w + m k, k p).
+        coef, *_ = np.linalg.lstsq(Z.T, Y_f.T, rcond=None)
+        O_i = coef[:n_w, :].T @ W_p  # shape (k p, j)
+
+        U_svd, S_svd, Vt_svd = np.linalg.svd(O_i, full_matrices=False)
+        rank = max(1, min(n, S_svd.size))
+        sqrt_s = np.sqrt(np.maximum(S_svd[:rank], 1e-12))
+        Gamma = U_svd[:, :rank] * sqrt_s
+        if rank < n:
+            # Pad with tiny columns so dims line up; EM will refine.
+            pad = np.zeros((Gamma.shape[0], n - rank))
+            pad[:n - rank] = 1e-3 * np.eye(n - rank, Gamma.shape[0]).T
+            Gamma = np.hstack([Gamma, pad])
+        C_sub = Gamma[:p, :]
+        # Shift-invariance: Γ[:-p] A = Γ[p:].
+        A_sub, *_ = np.linalg.lstsq(Gamma[:-p, :], Gamma[p:, :], rcond=None)
+
+        eig = np.linalg.eigvals(A_sub)
+        rho = float(np.max(np.abs(eig))) if eig.size else 0.0
+        if rho > _RHO_CAP_INIT:
+            A_sub = A_sub * (0.99 / rho)
+    except Exception:
+        return _warm_start(Y, U, n)
+
+    # Rough state trajectory: one-step Kalman predictor with placeholder Q, R.
+    # We just need a state sequence good enough for the dynamics regression
+    # below; EM will sharpen it.
+    Q0 = np.eye(n)
+    R0 = np.eye(p)
+    a0 = np.zeros(n)
+    c0 = y_mean.copy()
+    x0 = np.zeros(n)
+    P0 = np.eye(n)
+    x_filt, _Pf, _xp, _Pp, _ll, _Kl = _kalman_filter_affine(
+        Y, U, A_sub, np.zeros((n, m)), C_sub, Q0, R0, a0, c0, x0, P0
+    )
+    x_hat = x_filt
+
+    # Same regressions as _warm_start, but on the N4SID state sequence.
+    rt = np.hstack([x_hat[:-1], U[:-1], np.ones((T - 1, 1))])
+    dyn_sol, *_ = np.linalg.lstsq(rt, x_hat[1:], rcond=None)
+    dyn_sol = dyn_sol.T
+    A_w = dyn_sol[:, :n]
+    B_w = dyn_sol[:, n:n + m]
+    a_w = dyn_sol[:, n + m]
+    eig = np.linalg.eigvals(A_w)
+    rho = float(np.max(np.abs(eig))) if eig.size else 0.0
+    if rho > _RHO_CAP_INIT:
+        A_w = A_w * (0.99 / rho)
+
+    st = np.hstack([x_hat, np.ones((T, 1))])
+    obs_sol, *_ = np.linalg.lstsq(st, Y, rcond=None)
+    obs_sol = obs_sol.T
+    C_w = obs_sol[:, :n]
+    c_w = obs_sol[:, n]
+
+    pred_x = rt @ dyn_sol.T
+    Q_resid = x_hat[1:] - pred_x
+    Q_w = _regularize_cov(np.cov(Q_resid.T, ddof=0)) if T > 2 else np.eye(n) * _COV_FLOOR
+
+    pred_y = st @ obs_sol.T
+    R_resid = Y - pred_y
+    R_w = _regularize_cov(np.cov(R_resid.T, ddof=0)) if T > 1 else np.eye(p) * _COV_FLOOR
+
+    x0_mean = x_hat[0].copy()
+    P0_out = np.eye(n)
+
+    return dict(A=A_w, B=B_w, C=C_w, Q=Q_w, R=R_w, a=a_w, c=c_w,
+                x0_mean=x0_mean, P0=P0_out, y_mean=y_mean,
+                init_method="n4sid",
+                hankel_sigma=S_svd if 'S_svd' in dir() else None)
+
+
+def estimate_order(
+    Y: np.ndarray, U: np.ndarray, max_n: int = 12, k: Optional[int] = None,
+    sigma_threshold: float = 1e-3,
+) -> Tuple[int, np.ndarray]:
+    """Order estimate from the N4SID Hankel singular spectrum.
+
+    Returns ``(n_hat, sigma)``. ``n_hat`` is the number of singular values
+    that exceed ``sigma_threshold × σ[0]`` (within the first ``max_n``) —
+    the count of "non-trivial" modes against the noise floor.
+
+    Notes
+    -----
+    Works well when the spectrum has a clean cliff (as on the Brain — a
+    12-order-of-magnitude drop at the true ``n = 6``). For systems with a
+    *continuous* spread of singular values (random small-n systems often
+    look like this), automatic order selection is genuinely ambiguous and
+    callers should set ``n`` manually. The threshold ``1e-3`` is the right
+    bar for systems near the Brain's regime; tighten / loosen for cleaner
+    or noisier data.
+    """
+    T, p = Y.shape
+    m = U.shape[1]
+    k_win = k
+    if k_win is None:
+        k_win = max(2 * max_n, 3)
+        while T - 2 * k_win + 1 < (m + p) * k_win + 1 and k_win > max_n + 1:
+            k_win -= 1
+    j = T - 2 * k_win + 1
+    if j < (m + p) * k_win + 1:
+        raise ValueError(f"too few samples for order selection: T={T}, k={k_win}, max_n={max_n}")
+
+    Yc = Y - Y.mean(axis=0)
+    U_p = _block_hankel(U, k_win, 0, j)
+    U_f = _block_hankel(U, k_win, k_win, j)
+    Y_p = _block_hankel(Yc, k_win, 0, j)
+    Y_f = _block_hankel(Yc, k_win, k_win, j)
+    W_p = np.vstack([U_p, Y_p])
+    Z = np.vstack([W_p, U_f])
+    coef, *_ = np.linalg.lstsq(Z.T, Y_f.T, rcond=None)
+    O_i = coef[:W_p.shape[0], :].T @ W_p
+    sigma = np.linalg.svd(O_i, compute_uv=False)
+    head = sigma[:max_n]
+    if head.size == 0 or head[0] <= 0:
+        return 1, sigma
+    norm = head / head[0]
+
+    # Two cooperating rules:
+    #   (a) noise-floor: count SVs above ``sigma_threshold * σ[0]``;
+    #   (b) knee:        last index where σ_k / σ_{k-1} ≤ 0.5 (≥ 2× drop).
+    # We take the larger so that a clean cliff after a long shallow decay
+    # (e.g. the 6th Brain mode at σ ≈ 1e-3 σ[0]) isn't truncated by an
+    # over-eager threshold rule. Both rules independently land on n = 6
+    # for the Brain.
+    n_from_threshold = int((norm > sigma_threshold).sum())
+    if head.size >= 2:
+        ratios = head[1:] / np.maximum(head[:-1], 1e-300)
+        knee_idx = np.where(ratios <= 0.5)[0]
+        n_from_knee = int(knee_idx.max()) + 1 if knee_idx.size else 1
+    else:
+        n_from_knee = 1
+    return max(n_from_threshold, n_from_knee, 1), sigma
+
+
 def _hankel_past_future(Yc: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
     T, p = Yc.shape
     j = T - 2 * k + 1
@@ -384,6 +590,7 @@ class EstimatorNew:
         max_iter: int = 100,
         tol: float = 1e-4,
         verbose: bool = False,
+        init: str = "n4sid",
     ) -> "EstimatorNew":
         Y = np.asarray(Y, dtype=float)
         U = np.asarray(U, dtype=float)
@@ -395,10 +602,28 @@ class EstimatorNew:
         p = Y.shape[1]
         m = U.shape[1]
         if n is None:
-            n = 4  # spec default for all factory scenarios
+            n_hat, _ = estimate_order(Y, U, max_n=min(12, max(2, (T // 12) - 1)))
+            n = max(int(n_hat), 1)
         self.n, self.p, self.m = int(n), int(p), int(m)
 
-        warm = _warm_start(Y, U, n)
+        if init == "n4sid":
+            warm = _n4sid_init(Y, U, n)
+        elif init in ("output_ssi", "warm_start", "ssi"):
+            warm = _warm_start(Y, U, n)
+        elif init == "random":
+            rng = np.random.default_rng(0)
+            A0 = 0.8 * np.eye(n)
+            B0 = 0.1 * rng.standard_normal((n, m))
+            C0 = rng.standard_normal((p, n))
+            warm = dict(
+                A=A0, B=B0, C=C0,
+                Q=np.eye(n), R=np.eye(p),
+                a=np.zeros(n), c=Y.mean(axis=0),
+                x0_mean=np.zeros(n), P0=np.eye(n),
+                y_mean=Y.mean(axis=0),
+            )
+        else:
+            raise ValueError(f"unknown init={init!r}; use 'n4sid', 'output_ssi', or 'random'")
         A, B, C = warm["A"], warm["B"], warm["C"]
         Q, R = warm["Q"], warm["R"]
         a, c = warm["a"], warm["c"]

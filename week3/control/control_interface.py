@@ -1,4 +1,4 @@
-"""IdentifiedSystem — the ONLY importer of ``estimator_new``.
+"""IdentifiedSystem — the ONLY importer of ``estimator/``.
 
 Spec rule #2: controllers / observer / reachability / driver consume only
 ``(A, B, C, Q, R, a, c)``. This file is the lone bridge to the EM identifier.
@@ -8,71 +8,20 @@ Calibration:
     2. Fit ``EstimatorNew`` (affine LGSSM, EM with known inputs).
     3. Record diagnostics + degenerate-identification flags.
 
-No dither, no online re-identification (spec rule #3).
+No dither, no online re-identification.
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 
-# Add week3/ to sys.path so we can import the sibling estimator_new module.
-_WEEK3_DIR = Path(__file__).resolve().parent.parent
-_week3_str = str(_WEEK3_DIR)
-if _week3_str not in sys.path:
-    sys.path.insert(0, _week3_str)
-
-import estimator_new as _estimator_new  # noqa: E402 (only importer)
+# Spec rule #2: this file is the ONLY importer of the estimator package.
+from estimator import identify as _identify  # noqa: E402 (only importer)
+EstimatorNew = _identify.EstimatorNew
 
 from .observer import SteadyStateKalman
 from .probes import uniform_probe
-
-
-def compute_pca_readout(Y: np.ndarray, k: int = 2) -> tuple[np.ndarray, np.ndarray]:
-    """Top-k principal components of measurements ``Y`` as a readout matrix.
-
-    Each PC is one weighted combination of the 16 measurements capturing a
-    dominant pattern of population activity. Returned ``M`` has shape ``(k, p)``
-    and rows are the top-k right singular vectors of mean-centred ``Y``.
-
-    Parameters
-    ----------
-    Y : ndarray, shape (T, p)
-        Measurement matrix from a probe or open-loop run.
-    k : int
-        Number of leading principal components (default 2 — matches the
-        number of inputs, so we can independently hold k quantities).
-
-    Returns
-    -------
-    M : ndarray, shape (k, p)
-        Readout projection (rows are unit-norm).
-    explained_var_ratio : ndarray, shape (k,)
-        Fraction of total variance captured by each PC.
-    """
-    Y = np.asarray(Y, dtype=float)
-    Yc = Y - Y.mean(axis=0, keepdims=True)
-    # SVD of T×p matrix: U(T×r) S(r) Vt(r×p). PCs of Y are rows of Vt.
-    _, S, Vt = np.linalg.svd(Yc, full_matrices=False)
-    M = Vt[:k].copy()
-    var_total = float((S ** 2).sum())
-    explained = (S[:k] ** 2) / var_total if var_total > 0 else np.zeros(k)
-    return M, explained
-
-
-def readout_steady_state_gain(
-    A: np.ndarray, B: np.ndarray, C: np.ndarray, M: np.ndarray
-) -> np.ndarray:
-    """Steady-state input → readout gain ``G = M C (I − A)^{-1} B``.
-
-    Used to verify the readout is well-controllable (cond(G) small means
-    each PC can be moved independently by the inputs).
-    """
-    n = A.shape[0]
-    I = np.eye(n)
-    return M @ C @ np.linalg.solve(I - A, B)
+from .readouts import compute_pca_readout, readout_steady_state_gain
 
 
 class IdentifiedSystem:
@@ -96,7 +45,7 @@ class IdentifiedSystem:
         self.a = self.c = None
         self.Y_cal = None
         self.U_cal = None
-        self.estimator: _estimator_new.EstimatorNew | None = None
+        self.estimator: EstimatorNew | None = None
         self.diagnostics: dict = {}
         self.degenerate_flags: list[str] = []
         self.validation: dict = {}
@@ -110,7 +59,7 @@ class IdentifiedSystem:
         self,
         plant,
         T_cal: int,
-        n: int = 4,
+        n: int = 6,
         m: int | None = None,
         probe=None,
         seed: int = 0,
@@ -141,7 +90,7 @@ class IdentifiedSystem:
             Y[t] = plant.measure()
             plant.next_state(probe[t])
 
-        est = _estimator_new.EstimatorNew().fit(
+        est = EstimatorNew().fit(
             Y, probe, n=n, max_iter=em_max_iter, tol=em_tol
         )
 

@@ -1,0 +1,35 @@
+[eval] REAL  seeds=[0, 1, 2, 3, 4, 5, 6, 7]  41 targets  max_steps=1500  ctrl_kwargs={}
+  [seed 0] landed 28/41 (68%)
+  [seed 1] landed 32/41 (78%)
+  [seed 2] landed 33/41 (80%)
+  [seed 3] landed 35/41 (85%)
+  [seed 4] landed 29/41 (71%)
+  [seed 5] landed 37/41 (90%)
+  [seed 6] landed 18/41 (44%)
+  [seed 7] landed 37/41 (90%)
+
+============================================================
+ plant            : REAL
+ seeds            : [0, 1, 2, 3, 4, 5, 6, 7]
+ reaches          : 328  (41 targets x 8 seeds)
+ overall landing  : 249/328  (75.9%)
+ outcome mix      : land=249 near_miss=38 limit_cycle=39 stall=2
+ targets reliable (landing_rate==1.0)   : 5/41
+ targets robust   (landing_rate>=0.8)   : 16/41
+ targets fragile  (0<landing_rate<0.8)  : 25/41
+ targets dead     (landing_rate==0.0)   : 0/41
+ median steps (landed)      : 612
+ median path ratio (landed) : 2.24
+   seed 0: 28/41 landed
+   seed 1: 32/41 landed
+   seed 2: 33/41 landed
+   seed 3: 35/41 landed
+   seed 4: 29/41 landed
+   seed 5: 37/41 landed
+   seed 6: 18/41 landed
+   seed 7: 37/41 landed
+============================================================
+[csv] wrote C:\Github\GG4\week4\docs\eval_real_reaches.csv
+[csv] wrote C:\Github\GG4\week4\docs\eval_real_bytarget.csv
+[txt] wrote C:\Github\GG4\week4\docs\eval_real_summary.txt
+[figure] wrote C:\Github\GG4\week4\docs\eval_real_map.pdf

@@ -1,0 +1,92 @@
+calibrating on seeds [0, 1, 2, 3, 4, 5, 6, 7]
+
+=== A-sweep (selectivity without clipping; fresh cold latch per A) ===
+  shoulder+ (f=0.070):
+      A=0.30  v_driven=0.0660  v_other=0.0000  runner-up_sel=0.000  clip=0.00
+      A=0.40  v_driven=0.0800  v_other=0.0000  runner-up_sel=0.000  clip=0.00
+      A=0.45  v_driven=0.0805  v_other=0.0000  runner-up_sel=0.000  clip=0.00 <-
+      A=0.49  v_driven=0.0805  v_other=0.0000  runner-up_sel=0.000  clip=0.00
+      A=0.55  v_driven=0.0805  v_other=0.0000  runner-up_sel=0.000  clip=0.27
+  shoulder- (f=0.125):
+      A=0.30  v_driven=0.0189  v_other=0.0000  runner-up_sel=0.034  clip=0.00
+      A=0.40  v_driven=0.0343  v_other=0.0000  runner-up_sel=0.034  clip=0.00
+      A=0.45  v_driven=0.0421  v_other=0.0000  runner-up_sel=0.034  clip=0.00
+      A=0.49  v_driven=0.0483  v_other=0.0000  runner-up_sel=0.034  clip=0.00 <-
+      A=0.55  v_driven=0.0537  v_other=0.0000  runner-up_sel=0.034  clip=0.25
+     elbow+ (f=0.205):
+      A=0.30  v_driven=0.0101  v_other=0.0013  runner-up_sel=0.034  clip=0.00
+      A=0.40  v_driven=0.0238  v_other=0.0013  runner-up_sel=0.034  clip=0.00
+      A=0.45  v_driven=0.0312  v_other=0.0013  runner-up_sel=0.034  clip=0.00
+      A=0.49  v_driven=0.0372  v_other=0.0013  runner-up_sel=0.034  clip=0.00 <-
+      A=0.55  v_driven=0.0435  v_other=0.0013  runner-up_sel=0.034  clip=0.27
+     elbow- (f=0.315):
+      A=0.30  v_driven=0.0000  v_other=0.0013  runner-up_sel=0.001  clip=0.00
+      A=0.40  v_driven=0.0004  v_other=0.0013  runner-up_sel=0.034  clip=0.00
+      A=0.45  v_driven=0.0041  v_other=0.0013  runner-up_sel=0.034  clip=0.00
+      A=0.49  v_driven=0.0081  v_other=0.0013  runner-up_sel=0.034  clip=0.00 <-
+      A=0.55  v_driven=0.0126  v_other=0.0008  runner-up_sel=0.023  clip=0.27
+  chosen A*: {shoulder+:0.45, shoulder-:0.49, elbow+:0.49, elbow-:0.49}
+  seed 0 done (1/8)
+  seed 1 done (2/8)
+  seed 2 done (3/8)
+  seed 3 done (4/8)
+  seed 4 done (5/8)
+  seed 5 done (6/8)
+  seed 6 done (7/8)
+  seed 7 done (8/8)
+
+=== per-muscle recipe (mean [min, max] across seeds) ===
+
+  0 shoulder+ (f=0.070):
+     steady |v|   = 0.0654 rad/step  [0.0443,0.0802]  (sign +1)
+     cold onset   = 93 steps  [68,125]  (power-ramp)
+     warm switch  = 36 steps  [33,40]  (selector rise; power floor 0.10)
+     own selector = 0.980 (threshold 0.15 -> bottleneck if low)
+     coast travel = 1.891 rad  [1.323,2.659]
+     brake travel = 1.534 rad  [0.615,2.131]  (brake gain 1.23x shorter than coast)
+     other-joint |v| = 0.0000 rad/step  runner-up sel = 0.004  power = 0.59
+
+  1 shoulder- (f=0.125):
+     steady |v|   = 0.0382 rad/step  [0.0489,0.0221]  (sign -1)
+     cold onset   = 93 steps  [69,123]  (power-ramp)
+     warm switch  = 56 steps  [36,100]  (selector rise; power floor 0.11)
+     own selector = 0.564 (threshold 0.15 -> bottleneck if low)
+     coast travel = 0.714 rad  [0.152,1.252]
+     brake travel = 0.475 rad  [0.180,0.807]  (brake gain 1.50x shorter than coast)
+     other-joint |v| = 0.0000 rad/step  runner-up sel = 0.056  power = 0.59
+
+  2 elbow+ (f=0.205):
+     steady |v|   = 0.0270 rad/step  [0.0190,0.0384]  (sign +1)
+     cold onset   = 95 steps  [79,120]  (power-ramp)
+     warm switch  = 54 steps  [39,77]  (selector rise; power floor 0.03)
+     own selector = 0.322 (threshold 0.15 -> bottleneck if low)
+     coast travel = 0.580 rad  [0.265,1.093]
+     brake travel = 0.236 rad  [0.000,1.104]  (brake gain 2.45x shorter than coast)
+     other-joint |v| = 0.0001 rad/step  runner-up sel = 0.021  power = 0.57
+
+  3 elbow- (f=0.315):
+     steady |v|   = 0.0085 rad/step  [0.0146,0.0034]  (sign -1)
+     cold onset   = 94 steps  [31,120]  (power-ramp)
+     warm switch  = 58 steps  [34,111]  (selector rise; power floor 0.11)
+     own selector = 0.198 (threshold 0.15 -> bottleneck if low)
+     coast travel = 0.216 rad  [0.000,0.327]
+     brake travel = 0.150 rad  [0.000,0.261]  (brake gain 1.44x shorter than coast)
+     other-joint |v| = 0.0013 rad/step  runner-up sel = 0.013  power = 0.60
+
+=== shared-power mechanism ===
+  mean cold onset = 94 steps;  mean warm switch = 51 steps (1.8x faster)
+  warm switch to shoulder+: 36 steps  (power floor 0.10 -- stays latched)
+  warm switch to shoulder-: 56 steps  (power floor 0.11 -- stays latched)
+  warm switch to    elbow+: 54 steps  (power floor 0.03 -- stays latched)
+  warm switch to    elbow-: 58 steps  (power floor 0.11 -- stays latched)
+  -> warm switch << cold onset, power latched across switch: shared power confirmed.
+
+=== bottleneck: slowest muscle = elbow- (|v|=0.0085 rad/step) ===
+
+=== feasibility: identified vs true-brain |x1<-u0|, vs live steady |v| ===
+  shoulder+: identified=1.92  true-brain=1.88  live|v|(norm)=1.92
+  shoulder-: identified=1.10  true-brain=1.08  live|v|(norm)=1.12
+     elbow+: identified=0.71  true-brain=0.69  live|v|(norm)=0.79
+     elbow-: identified=0.51  true-brain=0.50  live|v|(norm)=0.25
+
+saved primitive_library.npz, primitive_onset.pdf, primitive_summary.pdf

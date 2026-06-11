@@ -1,0 +1,5 @@
+seed,x,y,radius,landed,outcome,final_err,steps,switches,n_seg,n_seg_lt_engage,overshoot_frac,path_ratio,capped
+0,30.0,0.0,30.0,False,limit_cycle,7.271,1500,22,11,3,0.382,20.95,True
+0,0.0,30.0,30.0,True,land,0.494,145,4,2,1,0.007,1.358,False
+0,-30.0,0.0,30.0,True,land,1.488,221,6,3,2,0.009,1.599,False
+0,-0.0,-30.0,30.0,False,limit_cycle,6.494,1500,22,11,5,0.349,10.478,True

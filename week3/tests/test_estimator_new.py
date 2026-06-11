@@ -16,7 +16,7 @@ import numpy as np
 from . import _path_helper  # noqa: F401
 import Simulator as sim  # noqa: E402
 
-from estimator_new import EstimatorNew, _kalman_filter_affine  # noqa: E402
+from estimator.identify import EstimatorNew, _kalman_filter_affine  # noqa: E402
 
 
 def _sim_affine_lgssm(rng, n=3, m=2, p=8, T=600):

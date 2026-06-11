@@ -1,4 +1,4 @@
-"""IdentifiedSystem.calibrate (Stage B wiring through estimator_new).
+"""IdentifiedSystem.calibrate (Stage B wiring through estimator/identify).
 
 Verifies the calibration round-trip on default_neural_system:
   - shapes correct,

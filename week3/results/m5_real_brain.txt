@@ -1,0 +1,96 @@
+==============================================================================
+  M5 — Real-Brain closed-loop on ≥ 5 seeds + probe-variance
+==============================================================================
+
+[P] Probe-variance — fixed Brain, vary probe seed → run-to-run control variance
+
+  [brain seed 0]  (re-using target from seed 0)
+    probe 0: rho=0.913  iters= 60  LQG ss×NF = 1.11  occ = 0.58
+    probe 1: rho=0.918  iters= 80  LQG ss×NF = 1.15  occ = 0.55
+    probe 2: rho=0.920  iters= 80  LQG ss×NF = 1.16  occ = 0.53
+    probe 3: rho=0.913  iters= 80  LQG ss×NF = 1.20  occ = 0.55
+    probe 4: rho=0.914  iters= 80  LQG ss×NF = 1.13  occ = 0.55
+
+  [brain seed 1]  (re-using target from seed 1)
+    probe 0: rho=0.944  iters= 58  LQG ss×NF = 1.25  occ = 0.45
+    probe 1: rho=0.933  iters= 56  LQG ss×NF = 1.24  occ = 0.45
+    probe 2: rho=0.949  iters= 55  LQG ss×NF = 1.35  occ = 0.41
+    probe 3: rho=0.930  iters= 64  LQG ss×NF = 1.29  occ = 0.45
+    probe 4: rho=0.934  iters= 56  LQG ss×NF = 1.29  occ = 0.39
+
+  [brain seed 2]  (re-using target from seed 2)
+    probe 0: rho=0.925  iters= 46  LQG ss×NF = 1.45  occ = 0.36
+    probe 1: rho=0.927  iters= 53  LQG ss×NF = 1.43  occ = 0.35
+    probe 2: rho=0.932  iters= 48  LQG ss×NF = 1.34  occ = 0.40
+    probe 3: rho=0.808  iters= 80  LQG ss×NF = 1.43  occ = 0.34
+    probe 4: rho=0.932  iters= 65  LQG ss×NF = 1.42  occ = 0.35
+
+  [brain seed 3]  (re-using target from seed 3)
+    probe 0: rho=0.801  iters= 11  LQG ss×NF = 1.19  occ = 0.47
+    probe 1: rho=0.802  iters= 54  LQG ss×NF = 1.22  occ = 0.46
+    probe 2: rho=0.938  iters= 80  LQG ss×NF = 1.19  occ = 0.50
+    probe 3: rho=0.932  iters= 66  LQG ss×NF = 1.19  occ = 0.49
+    probe 4: rho=0.914  iters= 80  LQG ss×NF = 1.19  occ = 0.49
+
+  [brain seed 4]  (re-using target from seed 4)
+    probe 0: rho=0.928  iters= 59  LQG ss×NF = 1.26  occ = 0.47
+    probe 1: rho=0.931  iters= 80  LQG ss×NF = 1.20  occ = 0.49
+    probe 2: rho=0.935  iters= 80  LQG ss×NF = 1.25  occ = 0.47
+    probe 3: rho=0.938  iters= 62  LQG ss×NF = 1.09  occ = 0.61
+    probe 4: rho=0.942  iters= 80  LQG ss×NF = 1.11  occ = 0.58
+
+[A] All tasks (hold/track/suppress) × 5 seeds × 2-D readout (+ 1-D as contrast)
+
+  [brain seed 0]  rho=0.911
+    2d     hold: ss×NF OL=11.76  LQG=1.15  LQGI=1.14  MPC=1.24
+    2d suppress: ss×NF OL=1.58  LQG=2.82  LQGI=2.64  MPC=1.51
+    2d    track: ss×NF OL=12.03  LQG=3.36  LQGI=3.19  MPC=2.23
+    1d     hold: ss×NF OL=1.62  LQG=1.60  LQGI=1.62  MPC=1.90
+    1d suppress: ss×NF OL=1.59  LQG=1.27  LQGI=1.28  MPC=1.60
+
+  [brain seed 1]  rho=0.954
+    2d     hold: ss×NF OL=11.28  LQG=1.26  LQGI=1.26  MPC=1.26
+    2d suppress: ss×NF OL=1.53  LQG=1.41  LQGI=1.45  MPC=1.56
+    2d    track: ss×NF OL=11.57  LQG=1.49  LQGI=1.54  MPC=1.48
+    1d     hold: ss×NF OL=1.71  LQG=1.71  LQGI=1.73  MPC=1.65
+    1d suppress: ss×NF OL=1.40  LQG=1.23  LQGI=1.38  MPC=1.79
+
+  [brain seed 2]  rho=0.827
+    2d     hold: ss×NF OL=11.54  LQG=1.49  LQGI=1.63  MPC=1.63
+    2d suppress: ss×NF OL=1.93  LQG=1.62  LQGI=1.99  MPC=2.25
+    2d    track: ss×NF OL=11.82  LQG=2.38  LQGI=2.36  MPC=2.38
+    1d     hold: ss×NF OL=1.95  LQG=1.70  LQGI=2.18  MPC=1.95
+    1d suppress: ss×NF OL=1.91  LQG=1.40  LQGI=1.87  MPC=1.91
+
+  [brain seed 3]  rho=0.805
+    2d     hold: ss×NF OL=11.89  LQG=1.19  LQGI=1.24  MPC=1.21
+    2d suppress: ss×NF OL=1.58  LQG=1.39  LQGI=1.56  MPC=1.92
+    2d    track: ss×NF OL=12.22  LQG=1.60  LQGI=1.59  MPC=1.63
+    1d     hold: ss×NF OL=1.36  LQG=1.39  LQGI=1.40  MPC=1.36
+    1d suppress: ss×NF OL=1.57  LQG=1.28  LQGI=1.27  MPC=1.57
+
+  [brain seed 4]  rho=0.941
+    2d     hold: ss×NF OL=11.28  LQG=1.13  LQGI=1.12  MPC=1.11
+    2d suppress: ss×NF OL=1.47  LQG=1.47  LQGI=1.52  MPC=1.43
+    2d    track: ss×NF OL=11.59  LQG=1.56  LQGI=1.59  MPC=1.53
+    1d     hold: ss×NF OL=1.69  LQG=1.79  LQGI=1.82  MPC=1.62
+    1d suppress: ss×NF OL=1.47  LQG=1.45  LQGI=1.47  MPC=1.47
+
+[R] Robustness — noise scale × Q × R on SimulatorPlant (Brain noise is fixed; this is the synthetic complement)
+  scale= 0.5:  OL=28.80  LQG=17.91  MPC=9.71
+  scale= 1.0:  OL=20.64  LQG=12.68  MPC=6.89
+  scale= 2.0:  OL=14.89  LQG=8.98  MPC=4.92
+  scale= 4.0:  OL=10.82  LQG=6.38  MPC=3.55
+
+[S] Sensitivity — LQR rho and MPC horizon on Brain seed 0
+  LQG rho=  0.01: ss×NF = 1.35  effort = 221.2
+  LQG rho=   0.1: ss×NF = 1.15  effort = 150.1
+  LQG rho=   1.0: ss×NF = 1.15  effort = 149.4
+  LQG rho=  10.0: ss×NF = 1.15  effort = 148.2
+  MPC H=  5: ss×NF = 1.24  effort = 194.9
+  MPC H= 10: ss×NF = 1.24  effort = 195.1
+  MPC H= 20: ss×NF = 1.24  effort = 195.1
+  MPC H= 40: ss×NF = 1.24  effort = 195.2
+
+[done]  wall-clock = 234.0s
+figure: C:\Github\GG4\week3\results\m5_real_brain.png

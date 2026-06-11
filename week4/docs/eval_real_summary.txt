@@ -1,0 +1,21 @@
+============================================================
+ plant            : REAL
+ seeds            : [0, 1, 2, 3, 4, 5, 6, 7]
+ reaches          : 328  (41 targets x 8 seeds)
+ overall landing  : 249/328  (75.9%)
+ outcome mix      : land=249 near_miss=38 limit_cycle=39 stall=2
+ targets reliable (landing_rate==1.0)   : 5/41
+ targets robust   (landing_rate>=0.8)   : 16/41
+ targets fragile  (0<landing_rate<0.8)  : 25/41
+ targets dead     (landing_rate==0.0)   : 0/41
+ median steps (landed)      : 612
+ median path ratio (landed) : 2.24
+   seed 0: 28/41 landed
+   seed 1: 32/41 landed
+   seed 2: 33/41 landed
+   seed 3: 35/41 landed
+   seed 4: 29/41 landed
+   seed 5: 37/41 landed
+   seed 6: 18/41 landed
+   seed 7: 37/41 landed
+============================================================

@@ -219,7 +219,7 @@ class MPC:
 
     uses_raw_y = False
 
-    def __init__(self, A, B, C, M, a=None, c=None, horizon: int = 15,
+    def __init__(self, A, B, C, M, a=None, c=None, horizon: int = 10,
                  rho: float = 0.1, Q_z=None, ref=None):
         self.A = np.asarray(A, dtype=float)
         self.B = np.asarray(B, dtype=float)
@@ -508,7 +508,7 @@ class OffsetFreeMPC(MPC):
 
     uses_raw_y = False  # consume x_hat as the driver normally provides
 
-    def __init__(self, A, B, C, M, a=None, c=None, horizon: int = 15,
+    def __init__(self, A, B, C, M, a=None, c=None, horizon: int = 10,
                  rho: float = 0.1, Q_z=None, ref=None,
                  dist_gain: float = 0.1, anti_windup: bool = True):
         super().__init__(A, B, C, M, a=a, c=c, horizon=horizon,

@@ -47,11 +47,10 @@ from control.controllers import (  # noqa: E402
     PI, LQGI, OffsetFreeMPC,
 )
 from control.closed_loop import run_closed_loop  # noqa: E402
-from control.control_interface import (  # noqa: E402
-    IdentifiedSystem, compute_pca_readout,
-)
+from control.control_interface import IdentifiedSystem  # noqa: E402
+from control.readouts import compute_pca_readout  # noqa: E402
 from control.reachability import steady_state_gain, feasibility, zonotope_vertices  # noqa: E402
-from control.metrics import rms, control_effort, saturation_fraction, settling_time  # noqa: E402
+from metrics import rms, control_effort, saturation_fraction, settling_time  # noqa: E402
 
 
 # ----------------------------------------------------------------------------
